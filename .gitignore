@@ -7,3 +7,8 @@
 .env
 *.swp
 *~
+
+# Node/npm files used by local tooling
+node_modules/
+package.json
+package-lock.json
