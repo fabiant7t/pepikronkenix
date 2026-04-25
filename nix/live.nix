@@ -162,13 +162,15 @@ in
   };
   services.getty.autologinUser = lib.mkForce "pepi";
 
-  # The write-usb script creates this partition after writing the ISO. If the
-  # live system is booted as a plain ISO without that partition, /models stays as
-  # a writable tmpfs directory from the live system instead.
+  # The write-usb script creates this partition after writing the ISO. Hybrid
+  # ISO partition tables can appear late on some firmware/kernel combinations,
+  # so a dedicated retrying service below mounts it. If the live system is
+  # booted as a plain ISO without that partition, /models stays as a writable
+  # tmpfs directory from the live system instead.
   fileSystems."/models" = {
     device = "/dev/disk/by-label/models";
     fsType = "ext4";
-    options = [ "nofail" "x-systemd.device-timeout=10s" ];
+    options = [ "nofail" "noauto" ];
   };
   systemd.tmpfiles.rules = [
     "d /models 2775 root models -"
@@ -177,12 +179,56 @@ in
     "d /models/kronk/libraries 2775 kronk models -"
   ];
 
+  systemd.services.pepikronkenix-mount-models = {
+    description = "Mount the writable pepikronkenix model partition if present";
+    wantedBy = [ "multi-user.target" ];
+    before = [ "pepikronkenix-models.service" ];
+    after = [ "local-fs.target" "systemd-udev-settle.service" ];
+    wants = [ "systemd-udev-settle.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      set -u
+      install -d -m 2775 -o root -g models /models
+
+      if ${pkgs.util-linux}/bin/findmnt --mountpoint /models >/dev/null; then
+        echo "/models is already mounted"
+        exit 0
+      fi
+
+      ${pkgs.systemd}/bin/udevadm trigger --subsystem-match=block || true
+      ${pkgs.systemd}/bin/udevadm settle --timeout=30 || true
+
+      for _ in $(${pkgs.coreutils}/bin/seq 1 30); do
+        if [ -e /dev/disk/by-label/models ]; then
+          break
+        fi
+        sleep 1
+      done
+
+      if [ ! -e /dev/disk/by-label/models ]; then
+        echo "WARNING: no partition labelled 'models' found; using non-persistent live tmpfs at /models" >&2
+        ${pkgs.util-linux}/bin/lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,MOUNTPOINTS || true
+        exit 0
+      fi
+
+      echo "Mounting /dev/disk/by-label/models at /models"
+      ${pkgs.util-linux}/bin/mount -t ext4 -o rw /dev/disk/by-label/models /models || {
+        echo "WARNING: failed to mount /dev/disk/by-label/models; using non-persistent live tmpfs at /models" >&2
+        ${pkgs.util-linux}/bin/lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,MOUNTPOINTS || true
+        exit 0
+      }
+    '';
+  };
+
   systemd.services.pepikronkenix-models = {
     description = "Prepare the writable pepikronkenix model store";
     wantedBy = [ "multi-user.target" ];
     before = [ "kronk.service" "pepikronkenix-kronk-libs.service" ];
-    after = [ "local-fs.target" "models.mount" ];
-    wants = [ "models.mount" ];
+    after = [ "local-fs.target" "pepikronkenix-mount-models.service" ];
+    wants = [ "pepikronkenix-mount-models.service" ];
     serviceConfig.Type = "oneshot";
     script = ''
       install -d -m 2775 -o kronk -g models /models/kronk /models/kronk/models /models/kronk/libraries
