@@ -1,0 +1,9 @@
+# Nix build outputs
+/result
+/result-*
+
+# Local/editor files
+.direnv/
+.env
+*.swp
+*~
