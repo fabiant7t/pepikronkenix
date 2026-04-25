@@ -18,6 +18,25 @@ The intended workflow is:
 6. Point any OpenAI-compatible client on another computer at
    `http://<ip>:11435/v1`.
 
+## Related projects
+
+This project is a small integration/build wrapper around these upstream projects
+and technologies:
+
+- [Gemma 4](https://deepmind.google/models/gemma/gemma-4/) — an example family
+  of open models that can be served through the live API when available in a
+  Kronk-supported format.
+- [Kronk](https://github.com/ardanlabs/kronk) — the local LLM inference server
+  exposed by this live USB.
+- [Yzma](https://github.com/hybridgroup/yzma) — related Go/native inference
+  tooling from Hybrid Group.
+- [purego](https://github.com/ebitengine/purego) — Go dynamic library loading
+  used in the broader native-library ecosystem.
+- [ffi](https://github.com/JupiterRider/ffi) — Go FFI support used by Kronk's
+  native runtime stack.
+- [NixOS](https://nixos.org/) — the reproducible Linux distribution used to
+  build the bootable live USB.
+
 ## What the live system provides
 
 - NixOS minimal live system.
