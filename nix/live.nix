@@ -31,6 +31,13 @@ let
     ${command}
   '';
 
+  # On NixOS, setuid programs such as sudo are exposed through
+  # /run/wrappers/bin. Calling ${pkgs.sudo}/bin/sudo directly bypasses that
+  # wrapper and fails with "sudo must be owned by uid 0 and have the setuid bit
+  # set".
+  sudo = "/run/wrappers/bin/sudo";
+  kronkEnvArgs = lib.concatStringsSep " " (lib.mapAttrsToList (name: value: "${name}=${lib.escapeShellArg value}") kronkEnv);
+
   statusScript = pkgs.writeShellScriptBin "pepikronkenix-status" (withKronkEnv ''
     echo "pepikronkenix"
     echo
@@ -50,18 +57,17 @@ let
     ${pkgs.curl}/bin/curl -fsS http://127.0.0.1:11435/v1/models | ${pkgs.jq}/bin/jq . || true
     echo
     echo "Model disk:"
-    ${pkgs.util-linux}/bin/findmnt /models || true
+    if ${pkgs.util-linux}/bin/findmnt --mountpoint /models >/dev/null; then
+      ${pkgs.util-linux}/bin/findmnt /models || true
+    else
+      echo "WARNING: /models is not mounted; model data is on the live tmpfs and will not persist."
+    fi
     ${pkgs.coreutils}/bin/df -h /models || true
   '');
 
   indexScript = pkgs.writeShellScriptBin "pepikronkenix-index-models" (withKronkEnv ''
-    install -d -m 2775 -o kronk -g models /models/kronk /models/kronk/models /models/kronk/libraries
-    exec ${pkgs.sudo}/bin/sudo -u kronk -g models \
-      HOME="$HOME" \
-      KRONK_BASE_PATH="$KRONK_BASE_PATH" \
-      KRONK_MODELS="$KRONK_MODELS" \
-      KRONK_LIB_PATH="$KRONK_LIB_PATH" \
-      KRONK_PROCESSOR="$KRONK_PROCESSOR" \
+    ${sudo} install -d -m 2775 -o kronk -g models /models/kronk /models/kronk/models /models/kronk/libraries
+    exec ${sudo} -u kronk -g models ${pkgs.coreutils}/bin/env ${kronkEnvArgs} \
       ${kronk}/bin/kronk model index --local
   '');
 
@@ -75,13 +81,13 @@ let
     fi
 
     ref="$1"
-    install -d -m 2775 -o kronk -g models /models/kronk /models/kronk/models /models/kronk/libraries
+    ${sudo} install -d -m 2775 -o kronk -g models /models/kronk /models/kronk/models /models/kronk/libraries
 
-    if ${pkgs.sudo}/bin/sudo -u kronk -g models HOME="$HOME" KRONK_BASE_PATH="$KRONK_BASE_PATH" KRONK_MODELS="$KRONK_MODELS" KRONK_LIB_PATH="$KRONK_LIB_PATH" KRONK_PROCESSOR="$KRONK_PROCESSOR" ${kronk}/bin/kronk catalog pull "$ref" --local; then
+    if ${sudo} -u kronk -g models ${pkgs.coreutils}/bin/env ${kronkEnvArgs} ${kronk}/bin/kronk catalog pull "$ref" --local; then
       exec pepikronkenix-index-models
     fi
 
-    ${pkgs.sudo}/bin/sudo -u kronk -g models HOME="$HOME" KRONK_BASE_PATH="$KRONK_BASE_PATH" KRONK_MODELS="$KRONK_MODELS" KRONK_LIB_PATH="$KRONK_LIB_PATH" KRONK_PROCESSOR="$KRONK_PROCESSOR" ${kronk}/bin/kronk model pull "$ref" --local
+    ${sudo} -u kronk -g models ${pkgs.coreutils}/bin/env ${kronkEnvArgs} ${kronk}/bin/kronk model pull "$ref" --local
     exec pepikronkenix-index-models
   '');
 in
@@ -210,7 +216,7 @@ in
       Group = "models";
       SupplementaryGroups = [ "video" "render" ];
       WorkingDirectory = "/models/kronk";
-      ExecStart = "${kronk}/bin/kronk server start --api-host=0.0.0.0:11435 --processor=${cfg.processor} --download-enabled=true";
+      ExecStart = "${kronk}/bin/kronk server start --api-host=0.0.0.0:11435 --processor=${cfg.processor}";
       Restart = "on-failure";
       RestartSec = "5s";
       TimeoutStartSec = "2min";
