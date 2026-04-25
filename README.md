@@ -243,8 +243,8 @@ Kronk expects model files below:
 Examples:
 
 ```text
-/models/kronk/models/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf
-/models/kronk/models/bartowski/DeepSeek-R1-Distill-Qwen-7B-GGUF/DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf
+/models/kronk/models/unsloth/gemma-4-E4B-it/gemma-4-E4B-it-Q4_K_M.gguf
+/models/kronk/models/unsloth/gemma-4-26B-A4B-it-UD/gemma-4-26B-A4B-it-UD-Q5_K_M.gguf
 ```
 
 When the live USB boots, it indexes this directory automatically before starting
@@ -280,9 +280,9 @@ sudo mkdir -p /mnt/pepikronkenix-models
 sudo mount /dev/disk/by-label/models /mnt/pepikronkenix-models
 
 sudo mkdir -p \
-  /mnt/pepikronkenix-models/kronk/models/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF
-sudo cp ./Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf \
-  /mnt/pepikronkenix-models/kronk/models/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF/
+  /mnt/pepikronkenix-models/kronk/models/unsloth/gemma-4-E4B-it
+sudo cp ./gemma-4-E4B-it-Q4_K_M.gguf \
+  /mnt/pepikronkenix-models/kronk/models/unsloth/gemma-4-E4B-it/
 
 # Make sure the guest service can read files regardless of UID/GID differences.
 sudo find /mnt/pepikronkenix-models/kronk/models -type d -exec chmod 755 {} +
