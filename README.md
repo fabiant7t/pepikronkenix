@@ -11,12 +11,12 @@ http://<live-machine-ip>:11435/v1
 The intended workflow is:
 
 1. Build a NixOS live ISO.
-2. Write it to a USB stick.
-3. Use the remaining USB space as a writable `models` partition.
-4. Boot any suitable PC from the stick.
-5. Upload or download GGUF models to `/models/kronk/models`.
-6. Point any OpenAI-compatible client on another computer at
-   `http://<ip>:11435/v1`.
+2. Write it to a USB stick; the writer uses the remaining USB space as a
+   writable `models` partition.
+3. On a trusted/admin computer, mount the USB's `models` partition and copy GGUF
+   models to `kronk/models` on that partition.
+4. Boot any suitable target PC from the stick; models are indexed automatically.
+5. Point any OpenAI-compatible client on the LAN at `http://<ip>:11435/v1`.
 
 ## Related projects
 
@@ -44,19 +44,20 @@ and technologies:
 - Kronk server bound to `0.0.0.0:11435`.
 - Firewall port `11435/tcp` opened.
 - Hostname `pepikronkenix` and mDNS/Avahi publishing.
-- SSH/SFTP enabled for uploading models.
-- User `pepi` with password `kronkenix`.
+- No SSH server, no password login, and no sudo for the live user.
+- Console autologin as unprivileged user `pepi`.
 - Writable ext4 partition mounted at `/models` when the USB was created with the
   provided writer script.
+- Automatic model indexing at boot.
 - Helper commands:
   - `pepikronkenix-status`
   - `pepikronkenix-index-models`
-  - `pepikronkenix-pull-model <catalog-id-or-hf-ref>`
 
-> Security note: this is a LAN appliance-style live image. Kronk authentication
-> is disabled by default, SSH password login is enabled, and the default password
-> is public. Use it only on trusted networks or harden the NixOS module before
-> deployment.
+> Security note: this is a guest/appliance-style live image. Kronk
+> authentication is disabled and the API is exposed on the LAN, but the image
+> deliberately does not run SSH and does not grant sudo to the console user. Add
+> models by mounting the USB model partition from another computer, not by
+> logging into the target PC over the network.
 
 ## Repository layout
 
@@ -223,12 +224,9 @@ Examples:
 /models/kronk/models/bartowski/DeepSeek-R1-Distill-Qwen-7B-GGUF/DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf
 ```
 
-After adding model files manually, rebuild Kronk's model index:
-
-```bash
-pepikronkenix-index-models
-sudo systemctl restart kronk
-```
+When the live USB boots, it indexes this directory automatically before starting
+Kronk. If you change the model partition, reboot the target PC so the service
+starts from a fresh index.
 
 Then verify:
 
@@ -236,61 +234,43 @@ Then verify:
 curl http://127.0.0.1:11435/v1/models | jq .
 ```
 
-## Upload models over the network
+## Add models by mounting the USB partition elsewhere
 
-The live image enables SSH/SFTP. From another computer:
+The live image intentionally does **not** enable SSH/SFTP. The target PC should
+act as a guest that only borrows CPU/GPU hardware; it should not expose a shell
+that can administer the machine.
 
-```bash
-ssh pepi@<live-machine-ip>
-# password: kronkenix
-```
+To add models:
 
-Create a destination directory and upload a GGUF file:
+1. Shut down the live system.
+2. Move the USB stick to another Linux computer.
+3. Mount the ext4 partition labelled `models`.
+4. Copy GGUF files under `kronk/models/<org>/<family>/` on that mounted
+   partition.
+5. Unmount cleanly and boot the target PC from the USB stick again.
 
-```bash
-ssh pepi@<live-machine-ip> \
-  'mkdir -p /models/kronk/models/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF'
-
-rsync -av --progress ./Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf \
-  pepi@<live-machine-ip>:/models/kronk/models/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF/
-```
-
-Then index on the live machine:
+Example on the computer where you copy models:
 
 ```bash
-pepikronkenix-index-models
-sudo systemctl restart kronk
+lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,MOUNTPOINTS
+sudo mkdir -p /mnt/pepikronkenix-models
+sudo mount /dev/disk/by-label/models /mnt/pepikronkenix-models
+
+sudo mkdir -p \
+  /mnt/pepikronkenix-models/kronk/models/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF
+sudo cp ./Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf \
+  /mnt/pepikronkenix-models/kronk/models/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF/
+
+# Make sure the guest service can read files regardless of UID/GID differences.
+sudo find /mnt/pepikronkenix-models/kronk/models -type d -exec chmod 755 {} +
+sudo find /mnt/pepikronkenix-models/kronk/models -type f -exec chmod 644 {} +
+
+sync
+sudo umount /mnt/pepikronkenix-models
 ```
 
-You can also run the index command remotely:
-
-```bash
-ssh pepi@<live-machine-ip> 'pepikronkenix-index-models && sudo systemctl restart kronk'
-```
-
-## Download models from the live machine
-
-If the booted live PC has internet access, use the helper:
-
-```bash
-pepikronkenix-pull-model Qwen3-0.6B-Q8_0
-```
-
-For Hugging Face shorthand supported by Kronk:
-
-```bash
-pepikronkenix-pull-model unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q4_K_M
-```
-
-For gated Hugging Face models, set a token in the shell before pulling:
-
-```bash
-export KRONK_HF_TOKEN=hf_...
-pepikronkenix-pull-model owner/repo:Q4_K_M
-```
-
-The helper first tries `kronk catalog pull ... --local`; if that fails, it tries
-`kronk model pull ... --local`, then rebuilds the model index.
+On next boot, `pepikronkenix-model-index.service` indexes the files before
+`kronk.service` starts.
 
 ## Kronk service management
 
@@ -306,18 +286,8 @@ Follow logs:
 journalctl -u kronk -f
 ```
 
-Restart after adding models:
-
-```bash
-sudo systemctl restart kronk
-```
-
-Stop/start manually:
-
-```bash
-sudo systemctl stop kronk
-sudo systemctl start kronk
-```
+After adding models by mounting the USB partition elsewhere, reboot the live
+system. Model indexing runs automatically before Kronk starts.
 
 The service runs as the system user `kronk` and uses these important variables:
 
@@ -331,18 +301,8 @@ KRONK_PROCESSOR=<cpu|vulkan|cuda|rocm>
 
 At first boot, the live system tries to install Kronk's llama.cpp runtime
 libraries into `/models/kronk/libraries`. This requires internet access once. If
-that step fails, install them later:
-
-```bash
-sudo -u kronk -g models env \
-  HOME=/models \
-  KRONK_BASE_PATH=/models/kronk \
-  KRONK_LIB_PATH=/models/kronk/libraries \
-  KRONK_PROCESSOR=cpu \
-  kronk libs --local --no-upgrade
-
-sudo systemctl restart kronk
-```
+that step fails, boot again later with internet access; the library installer
+service is retried at boot while the libraries are missing.
 
 Use `KRONK_PROCESSOR=vulkan`, `cuda`, or `rocm` if you built and booted a GPU
 profile and the target machine has the appropriate drivers/runtime support.
@@ -429,13 +389,14 @@ space.
 
 ### Kronk starts but `/v1/models` is empty
 
-Index the models and restart:
+Verify the automatic index service and API:
 
 ```bash
-pepikronkenix-index-models
-sudo systemctl restart kronk
+systemctl status pepikronkenix-model-index --no-pager
 curl http://127.0.0.1:11435/v1/models | jq .
 ```
+
+If you changed files while the live system was running, reboot.
 
 Verify that GGUF files are below the expected two-level directory structure:
 
@@ -452,12 +413,11 @@ ls -la /models/kronk/libraries
 cat /models/kronk/libraries/version.json
 ```
 
-If missing, install them with internet access:
+If missing, boot the live system with internet access and inspect the installer
+logs:
 
 ```bash
-sudo systemctl restart pepikronkenix-kronk-libs.service
 journalctl -u pepikronkenix-kronk-libs.service --no-pager
-sudo systemctl restart kronk
 ```
 
 ### Cannot reach the API from another machine

@@ -31,11 +31,6 @@ let
     ${command}
   '';
 
-  # On NixOS, setuid programs such as sudo are exposed through
-  # /run/wrappers/bin. Calling ${pkgs.sudo}/bin/sudo directly bypasses that
-  # wrapper and fails with "sudo must be owned by uid 0 and have the setuid bit
-  # set".
-  sudo = "/run/wrappers/bin/sudo";
   kronkEnvArgs = lib.concatStringsSep " " (lib.mapAttrsToList (name: value: "${name}=${lib.escapeShellArg value}") kronkEnv);
 
   statusScript = pkgs.writeShellScriptBin "pepikronkenix-status" (withKronkEnv ''
@@ -66,29 +61,11 @@ let
   '');
 
   indexScript = pkgs.writeShellScriptBin "pepikronkenix-index-models" (withKronkEnv ''
-    ${sudo} install -d -m 2775 -o kronk -g models /models/kronk /models/kronk/models /models/kronk/libraries
-    exec ${sudo} -u kronk -g models ${pkgs.coreutils}/bin/env ${kronkEnvArgs} \
+    umask 0002
+    mkdir -p /models/kronk/models /models/kronk/libraries
+    chmod g+rwxs /models/kronk /models/kronk/models /models/kronk/libraries 2>/dev/null || true
+    exec ${pkgs.coreutils}/bin/env ${kronkEnvArgs} \
       ${kronk}/bin/kronk model index --local
-  '');
-
-  pullScript = pkgs.writeShellScriptBin "pepikronkenix-pull-model" (withKronkEnv ''
-    if [ "$#" -lt 1 ]; then
-      echo "Usage: pepikronkenix-pull-model <catalog-id-or-huggingface-ref>" >&2
-      echo "Examples:" >&2
-      echo "  pepikronkenix-pull-model Qwen3-0.6B-Q8_0" >&2
-      echo "  pepikronkenix-pull-model unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q4_K_M" >&2
-      exit 2
-    fi
-
-    ref="$1"
-    ${sudo} install -d -m 2775 -o kronk -g models /models/kronk /models/kronk/models /models/kronk/libraries
-
-    if ${sudo} -u kronk -g models ${pkgs.coreutils}/bin/env ${kronkEnvArgs} ${kronk}/bin/kronk catalog pull "$ref" --local; then
-      exec pepikronkenix-index-models
-    fi
-
-    ${sudo} -u kronk -g models ${pkgs.coreutils}/bin/env ${kronkEnvArgs} ${kronk}/bin/kronk model pull "$ref" --local
-    exec pepikronkenix-index-models
   '');
 in
 {
@@ -104,7 +81,7 @@ in
 
   # Make the live medium discoverable and reachable on a LAN.
   networking.networkmanager.enable = true;
-  networking.firewall.allowedTCPPorts = [ 22 11435 ];
+  networking.firewall.allowedTCPPorts = [ 11435 ];
   services.avahi = {
     enable = true;
     nssmdns4 = true;
@@ -116,15 +93,12 @@ in
     };
   };
 
-  # SSH/SFTP is intentionally enabled so models can be uploaded over the LAN.
-  # Change the password after boot if the network is not trusted.
-  services.openssh = {
-    enable = true;
-    settings = {
-      PasswordAuthentication = true;
-      PermitRootLogin = "no";
-    };
-  };
+  # No SSH server and no sudo: the live system should be a guest that borrows
+  # compute hardware, not an administration endpoint for the host PC. Add models
+  # by shutting down, mounting the USB's ext4 partition labelled "models" on a
+  # different computer, and copying GGUF files there.
+  services.openssh.enable = false;
+  security.sudo.enable = false;
 
   users.groups.models = { };
   users.groups.kronk = { };
@@ -138,10 +112,9 @@ in
   users.users.pepi = {
     isNormalUser = true;
     description = "pepikronkenix live user";
-    extraGroups = [ "wheel" "networkmanager" "models" "video" "render" ];
-    initialPassword = "kronkenix";
+    extraGroups = [ "networkmanager" "models" "video" "render" ];
+    hashedPassword = "!";
   };
-  security.sudo.wheelNeedsPassword = false;
   services.getty.autologinUser = lib.mkForce "pepi";
 
   # The write-usb script creates this partition after writing the ISO. If the
@@ -180,7 +153,7 @@ in
     wantedBy = [ "multi-user.target" ];
     after = [ "network-online.target" "pepikronkenix-models.service" ];
     wants = [ "network-online.target" "pepikronkenix-models.service" ];
-    before = [ "kronk.service" ];
+    before = [ "pepikronkenix-model-index.service" "kronk.service" ];
     serviceConfig = {
       Type = "oneshot";
       User = "kronk";
@@ -188,6 +161,11 @@ in
       SupplementaryGroups = [ "video" "render" ];
       WorkingDirectory = "/models/kronk";
       TimeoutStartSec = "10min";
+      NoNewPrivileges = true;
+      ProtectHome = true;
+      ProtectSystem = "strict";
+      ReadWritePaths = [ "/models" ];
+      PrivateTmp = true;
     };
     environment = kronkEnv;
     script = ''
@@ -204,11 +182,38 @@ in
     '';
   };
 
+  systemd.services.pepikronkenix-model-index = {
+    description = "Index Kronk models from the writable model disk";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "pepikronkenix-models.service" "pepikronkenix-kronk-libs.service" ];
+    wants = [ "pepikronkenix-models.service" "pepikronkenix-kronk-libs.service" ];
+    before = [ "kronk.service" ];
+    environment = kronkEnv;
+    serviceConfig = {
+      Type = "oneshot";
+      User = "kronk";
+      Group = "models";
+      WorkingDirectory = "/models/kronk";
+      TimeoutStartSec = "5min";
+      NoNewPrivileges = true;
+      ProtectHome = true;
+      ProtectSystem = "strict";
+      ReadWritePaths = [ "/models" ];
+      PrivateTmp = true;
+    };
+    script = ''
+      ${kronk}/bin/kronk model index --local || {
+        echo "Model indexing failed. Check permissions and paths under /models/kronk/models." >&2
+        exit 0
+      }
+    '';
+  };
+
   systemd.services.kronk = {
     description = "Kronk OpenAI-compatible local inference server";
     wantedBy = [ "multi-user.target" ];
-    after = [ "network-online.target" "pepikronkenix-models.service" "pepikronkenix-kronk-libs.service" ];
-    wants = [ "network-online.target" "pepikronkenix-models.service" "pepikronkenix-kronk-libs.service" ];
+    after = [ "network-online.target" "pepikronkenix-models.service" "pepikronkenix-kronk-libs.service" "pepikronkenix-model-index.service" ];
+    wants = [ "network-online.target" "pepikronkenix-models.service" "pepikronkenix-kronk-libs.service" "pepikronkenix-model-index.service" ];
     environment = kronkEnv;
     path = [ pkgs.bash pkgs.coreutils pkgs.curl pkgs.gawk pkgs.git pkgs.gnutar pkgs.gzip pkgs.xz pkgs.zstd ];
     serviceConfig = {
@@ -217,6 +222,11 @@ in
       SupplementaryGroups = [ "video" "render" ];
       WorkingDirectory = "/models/kronk";
       ExecStart = "${kronk}/bin/kronk server start --api-host=0.0.0.0:11435 --processor=${cfg.processor}";
+      NoNewPrivileges = true;
+      ProtectHome = true;
+      ProtectSystem = "strict";
+      ReadWritePaths = [ "/models" ];
+      PrivateTmp = true;
       Restart = "on-failure";
       RestartSec = "5s";
       TimeoutStartSec = "2min";
@@ -228,24 +238,17 @@ in
     kronk
     statusScript
     indexScript
-    pullScript
     bashInteractive
     curl
     wget
     jq
     git
-    rsync
-    openssh
     vim
     nano
     htop
     tmux
     pciutils
     usbutils
-    parted
-    e2fsprogs
-    dosfstools
-    gptfdisk
     iproute2
     dnsutils
     lm_sensors
@@ -261,11 +264,10 @@ in
 
     Kronk listens on: http://<this-machine-ip>:11435/v1
     Local status:     pepikronkenix-status
-    Index models:     pepikronkenix-index-models
-    Pull model:       pepikronkenix-pull-model <catalog-id-or-hf-ref>
+    Index models:     pepikronkenix-index-models (also automatic at boot)
+    SSH/sudo:         disabled; copy models by mounting the USB model partition elsewhere
 
-    Login user:       pepi
-    Login password:   kronkenix
+    Login user:       pepi (console autologin, password disabled)
 
     Model partition:  /models
     Kronk data:       /models/kronk
