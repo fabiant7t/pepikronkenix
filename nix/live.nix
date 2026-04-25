@@ -65,6 +65,12 @@ let
       echo "WARNING: /models is not mounted; model data is on the live tmpfs and will not persist."
     fi
     ${pkgs.coreutils}/bin/df -h /models || true
+    echo
+    echo "Block devices:"
+    ${pkgs.util-linux}/bin/lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,MOUNTPOINTS || true
+    echo
+    echo "Model mount service:"
+    ${pkgs.systemd}/bin/systemctl --no-pager --plain status pepikronkenix-mount-models.service || true
   '');
 
   indexScript = pkgs.writeShellScriptBin "pepikronkenix-index-models" (withKronkEnv ''
@@ -191,7 +197,7 @@ in
     };
     script = ''
       set -u
-      install -d -m 2775 -o root -g models /models
+      ${pkgs.coreutils}/bin/install -d -m 2775 -o root -g models /models
 
       if ${pkgs.util-linux}/bin/findmnt --mountpoint /models >/dev/null; then
         echo "/models is already mounted"
@@ -199,24 +205,35 @@ in
       fi
 
       ${pkgs.systemd}/bin/udevadm trigger --subsystem-match=block || true
-      ${pkgs.systemd}/bin/udevadm settle --timeout=30 || true
+      ${pkgs.systemd}/bin/udevadm settle --timeout=60 || true
 
-      for _ in $(${pkgs.coreutils}/bin/seq 1 30); do
+      models_device=""
+      for _ in $(${pkgs.coreutils}/bin/seq 1 120); do
         if [ -e /dev/disk/by-label/models ]; then
+          models_device=/dev/disk/by-label/models
           break
         fi
-        sleep 1
+
+        # Fallback for cases where the block device is visible but the by-label
+        # symlink has not been created yet.
+        models_device="$(${pkgs.util-linux}/bin/lsblk -nrpo NAME,FSTYPE,LABEL \
+          | ${pkgs.gawk}/bin/awk '$2 == "ext4" && $3 == "models" { print $1; exit }')"
+        if [ -n "$models_device" ]; then
+          break
+        fi
+
+        ${pkgs.coreutils}/bin/sleep 1
       done
 
-      if [ ! -e /dev/disk/by-label/models ]; then
-        echo "WARNING: no partition labelled 'models' found; using non-persistent live tmpfs at /models" >&2
+      if [ -z "$models_device" ]; then
+        echo "WARNING: no ext4 partition labelled 'models' found; using non-persistent live tmpfs at /models" >&2
         ${pkgs.util-linux}/bin/lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,MOUNTPOINTS || true
         exit 0
       fi
 
-      echo "Mounting /dev/disk/by-label/models at /models"
-      ${pkgs.util-linux}/bin/mount -t ext4 -o rw /dev/disk/by-label/models /models || {
-        echo "WARNING: failed to mount /dev/disk/by-label/models; using non-persistent live tmpfs at /models" >&2
+      echo "Mounting $models_device at /models"
+      ${pkgs.util-linux}/bin/mount -t ext4 -o rw "$models_device" /models || {
+        echo "WARNING: failed to mount $models_device; using non-persistent live tmpfs at /models" >&2
         ${pkgs.util-linux}/bin/lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,MOUNTPOINTS || true
         exit 0
       }
