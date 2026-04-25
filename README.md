@@ -43,7 +43,8 @@ and technologies:
 - `kronk` built from `github.com/ardanlabs/kronk/cmd/kronk`.
 - Kronk server bound to `0.0.0.0:11435`.
 - Firewall port `11435/tcp` opened.
-- Hostname `pepikronkenix` and mDNS/Avahi publishing.
+- Boot menu, ISO volume label, hostname, and mDNS/Avahi publishing branded as
+  `pepikronkenix`.
 - No SSH server, no password login, and no sudo for the live user.
 - Console autologin as unprivileged user `pepi`.
 - Writable ext4 partition mounted at `/models` when the USB was created with the

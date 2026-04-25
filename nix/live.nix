@@ -77,6 +77,16 @@ in
 
   config = {
     image.baseName = lib.mkForce "pepikronkenix-${cfg.processor}-${config.system.nixos.label}-${hostSystem}";
+    system.nixos = {
+      distroName = "pepikronkenix";
+      variant_id = "live";
+      variantName = "pepikronkenix live USB";
+    };
+    isoImage = {
+      appendToMenuLabel = lib.mkForce "";
+      configurationName = lib.mkForce cfg.processor;
+      volumeID = lib.mkForce "pepikronkenix-${cfg.processor}";
+    };
   networking.hostName = "pepikronkenix";
 
   # Make the live medium discoverable and reachable on a LAN.
