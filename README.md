@@ -8,6 +8,10 @@ OpenAI-compatible HTTP API on:
 http://<live-machine-ip>:11435/v1
 ```
 
+The name is brilliant because Kronk's real name is Kronker Pepikrankenitz, and
+**pepikronkenix** neatly includes `pi` (the world's very best coding agent),
+`kronk`, and `nix`.
+
 The intended workflow is:
 
 1. Build a NixOS live ISO.
