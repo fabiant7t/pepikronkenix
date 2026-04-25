@@ -147,14 +147,22 @@ if [[ -z "$models_part" || ! -b "$models_part" ]]; then
 fi
 
 echo "Formatting $models_part as ext4 with label 'models'..."
+wipefs -a "$models_part" || true
 mkfs.ext4 -F -L models "$models_part"
 sync
+partprobe "$USB" || true
+udevadm settle || true
 
 cat >&2 <<EOF
 Done.
 
 USB layout:
 $(lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,MOUNTPOINTS "$USB")
+
+Note: NixOS hybrid ISOs usually show the ISO9660 filesystem on the whole disk
+($USB), plus partition entries such as a small EFI boot partition and the
+appended ext4 'models' partition. A separate "live ISO" partition is not
+required.
 
 Boot a PC from $USB. The live system will mount the writable partition at /models.
 EOF

@@ -4,6 +4,13 @@ let
   cfg = config.pepikronkenix;
   hostSystem = pkgs.stdenv.hostPlatform.system;
   kronk = self.packages.${hostSystem}.kronk;
+  imageProfileName = if cfg.imageProfileName == null then cfg.processor else cfg.imageProfileName;
+  processorLabel = {
+    cpu = "CPU";
+    vulkan = "Vulkan";
+    cuda = "CUDA";
+    rocm = "ROCm";
+  }.${cfg.processor};
   kronkEnv = {
     HOME = "/models";
     KRONK_BASE_PATH = "/models/kronk";
@@ -16,7 +23,7 @@ let
     # The Kronk package wrapper prepends its Nix-store runtime libraries to this,
     # so dlopen can see both the downloaded llama.cpp files and Nix-provided
     # libstdc++/libgomp/libffi.
-    LD_LIBRARY_PATH = "/models/kronk/libraries";
+    LD_LIBRARY_PATH = "/models/kronk/libraries:/run/opengl-driver/lib";
     # Keep the live system predictable. Run `kronk libs --local` manually if you
     # intentionally want to upgrade the llama.cpp backend on the writable disk.
     KRONK_ALLOW_UPGRADE = "false";
@@ -75,8 +82,18 @@ in
     description = "Kronk/llama.cpp backend to use on the live system.";
   };
 
+  options.pepikronkenix.imageProfileName = lib.mkOption {
+    type = lib.types.nullOr lib.types.str;
+    default = null;
+    description = ''
+      Profile name used in the generated ISO file name and volume label. When
+      null, the selected processor name is used. Set this to a shared value such
+      as "all" for ISOs that contain multiple boot specialisations.
+    '';
+  };
+
   config = {
-    image.baseName = lib.mkForce "pepikronkenix-${cfg.processor}-${config.system.nixos.label}-${hostSystem}";
+    image.baseName = lib.mkForce "pepikronkenix-${imageProfileName}-${config.system.nixos.label}-${hostSystem}";
     system.nixos = {
       distroName = "pepikronkenix";
       variant_id = "live";
@@ -84,10 +101,28 @@ in
     };
     isoImage = {
       appendToMenuLabel = lib.mkForce "";
-      configurationName = lib.mkForce cfg.processor;
-      volumeID = lib.mkForce "pepikronkenix-${cfg.processor}";
+      configurationName = lib.mkForce processorLabel;
+      volumeID = lib.mkForce "pepikronkenix-${imageProfileName}";
     };
   networking.hostName = "pepikronkenix";
+
+  # The CUDA boot profile needs NVIDIA's official/proprietary driver stack so
+  # Kronk's CUDA llama.cpp backend can dlopen libcuda.so from
+  # /run/opengl-driver/lib.
+  nixpkgs.config.allowUnfree = true;
+  services.xserver.videoDrivers = lib.mkIf (cfg.processor == "cuda") [ "nvidia" ];
+  hardware.nvidia = lib.mkIf (cfg.processor == "cuda") {
+    package = config.boot.kernelPackages.nvidiaPackages.stable;
+    open = false;
+    modesetting.enable = true;
+    nvidiaPersistenced = true;
+  };
+  boot.kernelModules = lib.optionals (cfg.processor == "cuda") [
+    "nvidia"
+    "nvidia_uvm"
+    "nvidia_modeset"
+    "nvidia_drm"
+  ];
 
   # Make the live medium discoverable and reachable on a LAN.
   networking.networkmanager.enable = true;

@@ -21,6 +21,35 @@
           })
         ];
       };
+
+      mkAllIso = nixpkgs.lib.nixosSystem {
+        inherit system;
+        specialArgs = { inherit self; };
+        modules = [
+          "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix"
+          ./nix/live.nix
+          ({ lib, ... }: {
+            # CPU is the default/fallback boot entry. The other entries are
+            # NixOS specialisations in the same ISO image.
+            pepikronkenix = {
+              processor = "cpu";
+              imageProfileName = "all";
+            };
+
+            specialisation = {
+              vulkan.configuration = { lib, ... }: {
+                pepikronkenix.processor = lib.mkForce "vulkan";
+              };
+              cuda.configuration = { lib, ... }: {
+                pepikronkenix.processor = lib.mkForce "cuda";
+              };
+              rocm.configuration = { lib, ... }: {
+                pepikronkenix.processor = lib.mkForce "rocm";
+              };
+            };
+          })
+        ];
+      };
     in {
       packages.${system} = {
         kronk = pkgs.callPackage ./nix/kronk.nix { };
@@ -28,12 +57,13 @@
       };
 
       nixosConfigurations = {
-        # Conservative default: works on the widest set of x86_64 PCs.
-        pepikronkenix = mkIso "cpu";
-        pepikronkenix-cpu = mkIso "cpu";
+        # Default image: one ISO with CPU fallback plus Vulkan/CUDA/ROCm boot
+        # specialisations.
+        pepikronkenix = mkAllIso;
+        pepikronkenix-all = mkAllIso;
 
-        # Experimental profiles. They include the same live system but ask Kronk
-        # to download/use the matching llama.cpp backend at runtime.
+        # Single-profile images remain available for smaller/specialised builds.
+        pepikronkenix-cpu = mkIso "cpu";
         pepikronkenix-vulkan = mkIso "vulkan";
         pepikronkenix-cuda = mkIso "cuda";
         pepikronkenix-rocm = mkIso "rocm";

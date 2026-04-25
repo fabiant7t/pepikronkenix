@@ -83,12 +83,13 @@ On the build machine:
 - Optional but recommended for a nicer USB write progress bar: `pv`.
 
 The target machine should be an x86_64 PC with enough RAM/VRAM for the models
-that you want to serve. The default ISO is CPU-only and works on the widest range
-of hardware. GPU profiles are provided as starting points.
+that you want to serve. The default ISO is an all-in-one image with CPU,
+Vulkan, CUDA, and ROCm boot entries; CPU is the default/fallback entry and works
+on the widest range of hardware.
 
 ## Build the ISO
 
-Default CPU image:
+Default all-in-one image:
 
 ```bash
 make iso
@@ -97,12 +98,22 @@ make iso
 Equivalent explicit form:
 
 ```bash
-make build-cpu
+make build-all
 ```
 
-Other profiles:
+This produces a single ISO with boot menu entries for:
+
+- `CPU` — default/fallback, widest compatibility;
+- `Vulkan`;
+- `CUDA` — includes NVIDIA's official/proprietary driver stack and enables
+  unfree packages in the NixOS configuration so `libcuda.so` is available;
+- `ROCm`.
+
+Single-profile images are still available when you want a smaller/specialised
+build:
 
 ```bash
+make build-cpu
 make build-vulkan
 make build-cuda
 make build-rocm
@@ -119,6 +130,8 @@ The resulting ISO is printed by `make` and is usually under:
 ```text
 result/iso/pepikronkenix-<profile>-<nixos-version>-x86_64-linux.iso
 ```
+
+For the default all-in-one image, `<profile>` is `all`.
 
 You can also build only the Kronk package:
 
@@ -150,7 +163,7 @@ Or pass a specific ISO:
 
 ```bash
 sudo make write-usb \
-  ISO=result/iso/pepikronkenix-cpu-...-x86_64-linux.iso \
+  ISO=result/iso/pepikronkenix-all-...-x86_64-linux.iso \
   USB=/dev/sdX \
   CONFIRM=pepikronkenix
 ```
@@ -164,9 +177,18 @@ The writer script does three things:
 
 At boot, NixOS mounts that partition at `/models`.
 
+NixOS live images are hybrid ISOs: the ISO9660 filesystem may appear on the
+whole USB device itself, while the partition table contains a small EFI boot
+partition and the appended `models` partition. Seeing only those two partition
+entries is normal; there does not have to be a separate "live ISO" partition.
+
 ## Boot and find the API address
 
-Boot a PC from the USB stick. The live system logs in automatically as `pepi`.
+Boot a PC from the USB stick. In the default all-in-one ISO, choose the best
+processor backend from the boot menu; if unsure, pick `CPU` or let the timeout
+select it automatically. Choose `CUDA` only on machines with supported NVIDIA
+GPUs; that entry loads NVIDIA's official driver. The live system logs in
+automatically as `pepi`.
 
 Run:
 
