@@ -10,7 +10,9 @@ Example:
   sudo scripts/write-usb.sh result-iso/iso/pepikronkenix-*.iso /dev/sdX pepikronkenix
 
 This writes the ISO to the USB device and creates an ext4 partition labelled
-"models" in the remaining free space. ALL DATA ON THE DEVICE WILL BE DESTROYED.
+"models" after a fixed 4 GiB ISO area if that filesystem does not already exist
+there. Existing model data in that fixed area is preserved. ALL OTHER DATA ON
+THE DEVICE WILL BE DESTROYED.
 
 Safety confirmation must be the literal word: pepikronkenix
 EOF
@@ -91,14 +93,43 @@ done < <(lsblk -nrpo MOUNTPOINTS "$USB" | sed '/^$/d' | tac)
 
 iso_bytes=$(stat -c %s "$ISO")
 disk_bytes=$(blockdev --getsize64 "$USB")
+reserved_mib=${PEPIKRONKENIX_ISO_RESERVED_MIB:-4096}
+reserved_bytes=$(( reserved_mib * 1024 * 1024 ))
 
-if (( disk_bytes <= iso_bytes + 1024 * 1024 * 1024 )); then
-  echo "ERROR: USB device must be at least about 1 GiB larger than the ISO to hold the models partition." >&2
+if (( iso_bytes > reserved_bytes - 16 * 1024 * 1024 )); then
+  echo "ERROR: ISO is too large for the reserved ISO area." >&2
+  echo "ISO size:      $iso_bytes bytes" >&2
+  echo "Reserved area: ${reserved_mib} MiB" >&2
+  echo "Increase PEPIKRONKENIX_ISO_RESERVED_MIB or rebuild a smaller ISO." >&2
   exit 1
 fi
 
-echo "Wiping old signatures..."
-wipefs -a "$USB" || true
+if (( disk_bytes <= reserved_bytes + 512 * 1024 * 1024 )); then
+  echo "ERROR: USB device must be at least about 512 MiB larger than the ${reserved_mib} MiB ISO area to hold the models partition." >&2
+  exit 1
+fi
+
+fixed_start_sector=$(( reserved_bytes / 512 ))
+existing_models=$(lsblk -nrpo NAME,LABEL,START "$USB" \
+  | awk '$2 == "models" { print $1 ":" $3; exit }')
+if [[ -n "$existing_models" ]]; then
+  existing_models_part=${existing_models%%:*}
+  existing_models_start=${existing_models##*:}
+  if [[ "$existing_models_start" != "$fixed_start_sector" ]]; then
+    cat >&2 <<EOF
+ERROR: found an existing models partition at $existing_models_part, but it starts
+at sector $existing_models_start instead of the fixed ${reserved_mib} MiB ISO
+boundary at sector $fixed_start_sector.
+
+This older layout cannot be preserved while reserving ${reserved_mib} MiB for
+future ISO updates. Back up the models, remove/recreate the USB once with this
+new writer, then future writes can preserve the models filesystem.
+EOF
+    exit 1
+  fi
+fi
+
+echo "Writing the ISO area. Existing model data after ${reserved_mib}MiB will not be touched."
 
 if command -v pv >/dev/null 2>&1; then
   echo "Writing ISO with progress bar..."
@@ -114,10 +145,11 @@ partprobe "$USB" || true
 udevadm settle || true
 sleep 2
 
-# Start the writable partition after the ISO image, aligned to MiB with a small
-# guard gap. Hybrid ISO partition layouts differ; placing the extra partition
-# after the image is the most robust strategy.
-start_mib=$(( (iso_bytes + 1024 * 1024 - 1) / (1024 * 1024) + 16 ))
+# Keep a fixed 4 GiB (by default) area for the hybrid ISO at the start of the
+# USB stick. The writable models filesystem starts after that fixed area. This
+# lets future ISO updates rewrite only the beginning of the stick and recreate
+# the partition table entry without touching the slow-to-copy model data.
+start_mib=$reserved_mib
 disk_mib=$(( disk_bytes / (1024 * 1024) ))
 
 if (( disk_mib - start_mib < 512 )); then
@@ -125,30 +157,36 @@ if (( disk_mib - start_mib < 512 )); then
   exit 1
 fi
 
-echo "Creating writable ext4 partition labelled 'models' from ${start_mib}MiB to end of disk..."
+echo "Creating/restoring writable ext4 partition entry labelled 'models' from ${start_mib}MiB to end of disk..."
 # Hybrid NixOS ISOs commonly expose an msdos partition table after writing.
 # On msdos, parted expects a partition type such as "primary" here; on GPT,
-# the same token is accepted as the partition name. The filesystem label is set
-# to "models" by mkfs.ext4 below, which is what the live system mounts.
+# the same token is accepted as the partition name. mkpart only creates the
+# partition table entry; it does not format or wipe an existing filesystem at
+# that offset.
 parted -s -a optimal "$USB" mkpart primary ext4 "${start_mib}MiB" 100%
 partprobe "$USB" || true
 udevadm settle || true
 sleep 2
 
-# Pick the partition that starts furthest into the device. Hybrid NixOS ISOs
-# can contain small boot partitions near the start of the disk whose partition
-# numbers are higher than the appended writable partition, so "last partition in
-# lsblk output" is not a reliable way to find the partition we just created.
-models_part=$(lsblk -b -nrpo NAME,TYPE,START "$USB" \
-  | awk '$2 == "part" && $3 != "" { if ($3 > max) { max=$3; part=$1 } } END { print part }')
+# Pick the partition that starts at the fixed model-data offset. Hybrid NixOS
+# ISOs can contain small boot partitions near the start of the disk whose
+# partition numbers are higher than the appended writable partition, so "last
+# partition in lsblk output" is not a reliable way to find it.
+models_part=$(lsblk -nrpo NAME,TYPE,START "$USB" \
+  | awk -v start="$(( start_mib * 1024 * 1024 / 512 ))" '$2 == "part" && $3 == start { print $1; exit }')
 if [[ -z "$models_part" || ! -b "$models_part" ]]; then
-  echo "ERROR: could not discover newly-created models partition." >&2
+  echo "ERROR: could not discover models partition at ${start_mib}MiB." >&2
   exit 1
 fi
 
-echo "Formatting $models_part as ext4 with label 'models'..."
-wipefs -a "$models_part" || true
-mkfs.ext4 -F -L models "$models_part"
+if blkid -o value -s TYPE "$models_part" 2>/dev/null | grep -qx ext4 \
+  && blkid -o value -s LABEL "$models_part" 2>/dev/null | grep -qx models; then
+  echo "Preserving existing ext4 filesystem labelled 'models' on $models_part."
+else
+  echo "No existing ext4 filesystem labelled 'models' found at ${start_mib}MiB. Formatting $models_part..."
+  wipefs -a "$models_part" || true
+  mkfs.ext4 -F -L models "$models_part"
+fi
 sync
 partprobe "$USB" || true
 udevadm settle || true

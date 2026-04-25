@@ -172,12 +172,25 @@ sudo make write-usb \
   CONFIRM=pepikronkenix
 ```
 
-The writer script does three things:
+The writer script keeps the first 4 GiB of the USB stick reserved for the
+hybrid ISO image. The writable `models` partition starts after that fixed area.
+This makes future ISO updates much faster: if an ext4 filesystem labelled
+`models` already exists at the 4 GiB boundary, the script rewrites the ISO area
+and restores the partition table entry without reformatting or recopying model
+data.
 
-1. wipes old filesystem signatures from the device;
-2. writes the hybrid ISO with `pv | dd` when `pv` is available, otherwise with
-   `dd status=progress`;
-3. creates an ext4 partition labelled `models` in the remaining free space.
+If the script finds an older `models` partition that starts before the 4 GiB
+boundary, it aborts instead of risking model data loss. Back up that partition
+and recreate the stick once with the new layout; subsequent ISO updates can then
+preserve the model data in place.
+
+The writer script does two things:
+
+1. writes the hybrid ISO into the reserved 4 GiB area with `pv | dd` when `pv`
+   is available, otherwise with `dd status=progress`;
+2. creates or restores an ext4 partition entry labelled `models` after the fixed
+   4 GiB ISO area, formatting it only when no existing `models` filesystem is
+   found there.
 
 At boot, NixOS mounts that partition at `/models`.
 
