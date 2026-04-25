@@ -135,7 +135,12 @@ partprobe "$USB" || true
 udevadm settle || true
 sleep 2
 
-models_part=$(lsblk -nrpo NAME,TYPE "$USB" | awk '$2 == "part" { p=$1 } END { print p }')
+# Pick the partition that starts furthest into the device. Hybrid NixOS ISOs
+# can contain small boot partitions near the start of the disk whose partition
+# numbers are higher than the appended writable partition, so "last partition in
+# lsblk output" is not a reliable way to find the partition we just created.
+models_part=$(lsblk -b -nrpo NAME,TYPE,START "$USB" \
+  | awk '$2 == "part" && $3 != "" { if ($3 > max) { max=$3; part=$1 } } END { print part }')
 if [[ -z "$models_part" || ! -b "$models_part" ]]; then
   echo "ERROR: could not discover newly-created models partition." >&2
   exit 1
