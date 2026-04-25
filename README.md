@@ -83,9 +83,9 @@ On the build machine:
 - Optional but recommended for a nicer USB write progress bar: `pv`.
 
 The target machine should be an x86_64 PC with enough RAM/VRAM for the models
-that you want to serve. The default ISO is an all-in-one image with CPU,
-Vulkan, CUDA, and ROCm boot entries; CPU is the default/fallback entry and works
-on the widest range of hardware.
+that you want to serve. The default build profile is the all-in-one ISO, which
+contains CPU, Vulkan, CUDA, and ROCm boot entries. Within that boot menu, CPU is
+the preselected fallback entry because it works on the widest range of hardware.
 
 ## Build the ISO
 
@@ -103,7 +103,7 @@ make build-all
 
 This produces a single ISO with boot menu entries for:
 
-- `CPU` — default/fallback, widest compatibility;
+- `CPU` — preselected fallback boot entry, widest compatibility;
 - `Vulkan`;
 - `CUDA` — includes NVIDIA's official/proprietary driver stack and enables
   unfree packages in the NixOS configuration so `libcuda.so` is available;
@@ -186,9 +186,9 @@ entries is normal; there does not have to be a separate "live ISO" partition.
 
 Boot a PC from the USB stick. In the default all-in-one ISO, choose the best
 processor backend from the boot menu; if unsure, pick `CPU` or let the timeout
-select it automatically. Choose `CUDA` only on machines with supported NVIDIA
-GPUs; that entry loads NVIDIA's official driver. The live system logs in
-automatically as `pepi`.
+select the CPU fallback automatically. Choose `CUDA` only on machines with
+supported NVIDIA GPUs; that entry loads NVIDIA's official driver. The live
+system logs in automatically as `pepi`.
 
 Run:
 
@@ -327,8 +327,9 @@ libraries into `/models/kronk/libraries`. This requires internet access once. If
 that step fails, boot again later with internet access; the library installer
 service is retried at boot while the libraries are missing.
 
-Use `KRONK_PROCESSOR=vulkan`, `cuda`, or `rocm` if you built and booted a GPU
-profile and the target machine has the appropriate drivers/runtime support.
+The selected boot entry sets `KRONK_PROCESSOR` automatically. Use a GPU entry
+only when the target machine has the appropriate hardware and driver/runtime
+support.
 
 ## Test text generation
 

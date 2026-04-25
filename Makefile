@@ -31,7 +31,7 @@ help:
 	@echo "pepikronkenix"
 	@echo
 	@echo "Build targets:"
-	@echo "  make iso                  Build the all-in-one live ISO (CPU default boot)"
+	@echo "  make iso                  Build the all-in-one live ISO (CPU fallback boot entry)"
 	@echo "  make iso PROFILE=vulkan   Build the Vulkan-only live ISO"
 	@echo "  make build-all            Build all-in-one ISO with CPU/Vulkan/CUDA/ROCm boot entries"
 	@echo "  make build-cpu            Build CPU-only ISO"

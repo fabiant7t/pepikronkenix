@@ -29,8 +29,8 @@
           "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix"
           ./nix/live.nix
           ({ lib, ... }: {
-            # CPU is the default/fallback boot entry. The other entries are
-            # NixOS specialisations in the same ISO image.
+            # CPU is the preselected fallback boot entry. The other entries
+            # are NixOS specialisations in the same ISO image.
             pepikronkenix = {
               processor = "cpu";
               imageProfileName = "all";
@@ -57,8 +57,8 @@
       };
 
       nixosConfigurations = {
-        # Default image: one ISO with CPU fallback plus Vulkan/CUDA/ROCm boot
-        # specialisations.
+        # Default build output: one ISO with a CPU fallback boot entry plus
+        # Vulkan/CUDA/ROCm boot specialisations.
         pepikronkenix = mkAllIso;
         pepikronkenix-all = mkAllIso;
 
