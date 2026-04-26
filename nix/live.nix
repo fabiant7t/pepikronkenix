@@ -168,7 +168,10 @@ in
   users.users.pepi = {
     isNormalUser = true;
     description = "pepikronkenix live user";
-    extraGroups = [ "networkmanager" "models" "video" "render" ];
+    # systemd-journal is read-only access to system logs. It is intentionally
+    # much narrower than sudo/wheel, but lets the autologin user see why the
+    # model partition did or did not mount on headless/live-USB boots.
+    extraGroups = [ "networkmanager" "models" "video" "render" "systemd-journal" ];
     hashedPassword = "!";
   };
   services.getty.autologinUser = lib.mkForce "pepi";
@@ -202,6 +205,12 @@ in
     };
     script = ''
       set -u
+      log=/run/pepikronkenix-mount-models.log
+      ${pkgs.coreutils}/bin/touch "$log"
+      ${pkgs.coreutils}/bin/chmod 0644 "$log"
+      exec > >(${pkgs.coreutils}/bin/tee -a "$log") 2>&1
+      echo "=== pepikronkenix model mount check: $(${pkgs.coreutils}/bin/date -Is) ==="
+
       ${pkgs.coreutils}/bin/install -d -m 2775 -o root -g models /models
 
       if ${pkgs.util-linux}/bin/findmnt --mountpoint /models >/dev/null; then
@@ -254,12 +263,16 @@ in
 
       echo "Mounting $models_real_device at /models"
       ${pkgs.util-linux}/bin/mount -t ext4 -o rw "$models_real_device" /models || {
-        echo "WARNING: failed to mount $models_real_device; using non-persistent live tmpfs at /models" >&2
+        echo "ERROR: failed to mount $models_real_device; using non-persistent live tmpfs at /models" >&2
         ${pkgs.util-linux}/bin/lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,UUID,MOUNTPOINTS || true
         ${pkgs.util-linux}/bin/blkid || true
         ${pkgs.util-linux}/bin/dmesg | ${pkgs.coreutils}/bin/tail -n 80 || true
-        exit 0
+        echo "The same diagnostics are readable at $log" >&2
+        exit 1
       }
+
+      echo "Mounted $models_real_device at /models successfully"
+      ${pkgs.util-linux}/bin/findmnt /models || true
     '';
   };
 
