@@ -321,9 +321,40 @@ in
     };
     environment = kronkEnv;
     script = ''
-      if [ -e /models/kronk/libraries/version.json ]; then
-        echo "Kronk llama.cpp libraries already installed in /models/kronk/libraries"
+      profile_marker=/models/kronk/libraries/.pepikronkenix-library-profile
+      machine_arch="$(${pkgs.coreutils}/bin/uname -m)"
+      cpu_flags_hash="$(${pkgs.gawk}/bin/awk -F: '/^flags[[:space:]]*:/ { print $2; exit }' /proc/cpuinfo \
+        | ${pkgs.coreutils}/bin/tr ' ' '\n' \
+        | ${pkgs.coreutils}/bin/sort -u \
+        | ${pkgs.coreutils}/bin/sha256sum \
+        | ${pkgs.gawk}/bin/awk '{ print $1 }')"
+      gpu_pci_hash="$(${pkgs.pciutils}/bin/lspci -nn \
+        | ${pkgs.gnugrep}/bin/grep -Ei 'vga|3d|display|nvidia|amd|intel' \
+        | ${pkgs.coreutils}/bin/sort \
+        | ${pkgs.coreutils}/bin/sha256sum \
+        | ${pkgs.gawk}/bin/awk '{ print $1 }')"
+      expected_profile="processor=${cfg.processor};machine=$machine_arch;cpu_flags_sha256=$cpu_flags_hash;gpu_pci_sha256=$gpu_pci_hash"
+
+      ${pkgs.coreutils}/bin/install -d -m 2775 /models/kronk/libraries
+
+      installed_profile=""
+      if [ -e "$profile_marker" ]; then
+        installed_profile="$(${pkgs.coreutils}/bin/cat "$profile_marker" 2>/dev/null || true)"
+      fi
+
+      if [ -e /models/kronk/libraries/version.json ] && [ "$installed_profile" = "$expected_profile" ]; then
+        echo "Kronk llama.cpp libraries already installed for $expected_profile in /models/kronk/libraries"
         exit 0
+      fi
+
+      if ${pkgs.findutils}/bin/find /models/kronk/libraries -mindepth 1 -maxdepth 1 -print -quit | ${pkgs.gnugrep}/bin/grep -q .; then
+        if [ -n "$installed_profile" ]; then
+          echo "Kronk llama.cpp libraries/profile '$installed_profile' do not match this boot's '$expected_profile'."
+        else
+          echo "Kronk llama.cpp libraries exist without a pepikronkenix profile marker."
+        fi
+        echo "Removing stale runtime libraries before installing the selected backend."
+        ${pkgs.findutils}/bin/find /models/kronk/libraries -mindepth 1 -maxdepth 1 -exec ${pkgs.coreutils}/bin/rm -rf -- {} +
       fi
 
       echo "Installing Kronk llama.cpp libraries for processor=${cfg.processor}. This needs internet once."
@@ -331,6 +362,8 @@ in
         echo "Library installation failed. Kronk may still start, but inference will not work until libraries are installed." >&2
         exit 0
       }
+
+      ${pkgs.coreutils}/bin/printf '%s\n' "$expected_profile" > "$profile_marker"
     '';
   };
 

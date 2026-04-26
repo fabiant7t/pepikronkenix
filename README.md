@@ -342,6 +342,16 @@ libraries into `/models/kronk/libraries`. This requires internet access once. If
 that step fails, boot again later with internet access; the library installer
 service is retried at boot while the libraries are missing.
 
+The library installer is profile-aware. It records the selected backend plus a
+small hardware signature in
+`/models/kronk/libraries/.pepikronkenix-library-profile`. The signature includes
+the selected processor mode, machine architecture, CPU feature flags, and visible
+display/GPU PCI devices. If a later boot selects a different backend or runs on
+different hardware, pepikronkenix removes the old runtime libraries before
+installing the newly selected backend. This prevents CPU/Vulkan/CUDA/ROCm or
+hardware-specific fragments from a previous boot from deciding the runtime
+architecture of the current boot.
+
 The selected boot entry sets `KRONK_PROCESSOR` automatically. Use a GPU entry
 only when the target machine has the appropriate hardware and driver/runtime
 support.
@@ -450,6 +460,7 @@ Check whether the runtime libraries exist:
 ```bash
 ls -la /models/kronk/libraries
 cat /models/kronk/libraries/version.json
+cat /models/kronk/libraries/.pepikronkenix-library-profile
 ```
 
 If missing, boot the live system with internet access and inspect the installer
