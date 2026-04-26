@@ -14,7 +14,7 @@ The name is brilliant because Kronk's real name is Kronker Pepikrankenitz, and
 
 The intended workflow is:
 
-1. Build a NixOS live ISO.
+1. Build a NixOS live USB disk image.
 2. Write it to a USB stick; the writer uses the remaining USB space as a
    writable `models` partition.
 3. On a trusted/admin computer, mount the USB's `models` partition and copy GGUF
@@ -47,7 +47,7 @@ and technologies:
 - `kronk` built from `github.com/ardanlabs/kronk/cmd/kronk`.
 - Kronk server bound to `0.0.0.0:11435`.
 - Firewall port `11435/tcp` opened.
-- Boot menu, ISO volume label, hostname, and mDNS/Avahi publishing branded as
+- Boot menu, hostname, and mDNS/Avahi publishing branded as
   `pepikronkenix`.
 - No SSH server, no password login, and no sudo for the live user.
 - Console autologin as unprivileged user `pepi`.
@@ -58,7 +58,7 @@ and technologies:
   - `pepikronkenix-status`
   - `pepikronkenix-index-models`
 
-> Security note: this is a guest/appliance-style live image. Kronk
+> Security note: this is a guest/appliance-style live disk image. Kronk
 > authentication is disabled and the API is exposed on the LAN, but the image
 > deliberately does not run SSH and does not grant sudo to the console user. Add
 > models by mounting the USB model partition from another computer, not by
@@ -67,11 +67,11 @@ and technologies:
 ## Repository layout
 
 ```text
-flake.nix              Nix flake outputs for Kronk and live ISO profiles
+flake.nix              Nix flake outputs for Kronk and live disk-image profiles
 nix/kronk.nix          Nix package for Kronk
 nix/live.nix           NixOS live USB configuration
 Makefile               Build and USB-writing convenience targets
-scripts/write-usb.sh   Writes ISO and creates the writable models partition
+scripts/write-usb.sh   Writes disk image and creates the writable models partition
 ```
 
 ## Prerequisites
@@ -81,22 +81,22 @@ On the build machine:
 - Linux with Nix installed.
 - Nix flakes enabled, or use the Makefile which passes the needed experimental
   feature flags.
-- Enough disk space for a NixOS ISO build.
-- For writing the USB stick: `sudo`, `dd`, `parted`, `wipefs`, `mkfs.ext4`,
-  `lsblk`, `udevadm`.
+- Enough disk space for a NixOS disk-image build.
+- For writing the USB stick: `sudo`, `dd`, `parted`, `sgdisk` from gptfdisk,
+  `wipefs`, `mkfs.ext4`, `lsblk`, `udevadm`.
 - Optional but recommended for a nicer USB write progress bar: `pv`.
 
 The target machine should be an x86_64 PC with enough RAM/VRAM for the models
-that you want to serve. The default build profile is the all-in-one ISO, which
+that you want to serve. The default build profile is the all-in-one disk image, which
 contains CPU, Vulkan, CUDA, and ROCm boot entries. Within that boot menu, CPU is
 the preselected fallback entry because it works on the widest range of hardware.
 
-## Build the ISO
+## Build the disk image
 
 Default all-in-one image:
 
 ```bash
-make iso
+make image
 ```
 
 Equivalent explicit form:
@@ -105,7 +105,7 @@ Equivalent explicit form:
 make build-all
 ```
 
-This produces a single ISO with boot menu entries for:
+This produces a single raw disk image with boot menu entries for:
 
 - `CPU` — preselected fallback boot entry, widest compatibility;
 - `Vulkan`;
@@ -126,13 +126,13 @@ make build-rocm
 or:
 
 ```bash
-make iso PROFILE=vulkan
+make image PROFILE=vulkan
 ```
 
-The resulting ISO is printed by `make` and is usually under:
+The resulting disk image is printed by `make` and is usually under:
 
 ```text
-result/iso/pepikronkenix-<profile>-<nixos-version>-x86_64-linux.iso
+result/pepikronkenix-<profile>-efi-raw-<nixos-version>-x86_64-linux.img
 ```
 
 For the default all-in-one image, `<profile>` is `all`.
@@ -157,51 +157,49 @@ lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,MOUNTPOINTS
 Use the whole disk device, for example `/dev/sdX`, `/dev/nvme1n1`, or
 `/dev/mmcblk0`, not a partition such as `/dev/sdX1`.
 
-Write the latest built ISO and create the writable `models` partition:
+Write the latest built disk image and create the writable `models` partition:
 
 ```bash
 sudo make write-usb USB=/dev/sdX CONFIRM=pepikronkenix
 ```
 
-Or pass a specific ISO:
+Or pass a specific disk image:
 
 ```bash
 sudo make write-usb \
-  ISO=result/iso/pepikronkenix-all-...-x86_64-linux.iso \
+  IMAGE=result/pepikronkenix-all-efi-raw-...-x86_64-linux.img \
   USB=/dev/sdX \
   CONFIRM=pepikronkenix
 ```
 
-The writer script keeps the first 4 GiB of the USB stick reserved for the
-hybrid ISO image. The writable `models` partition starts after that fixed area.
-This makes future ISO updates much faster: if an ext4 filesystem labelled
-`models` already exists at the 4 GiB boundary, the script rewrites the ISO area
-and restores the partition table entry without reformatting or recopying model
-data.
+The writer script keeps the first 16 GiB of the USB stick reserved for the
+raw disk image. The writable `models` partition starts after that fixed area.
+This makes future image updates much faster: if an ext4 filesystem labelled
+`models` already exists at the 16 GiB boundary, the script rewrites the image
+area, relocates the GPT backup header to the end of the USB device, and restores
+the partition table entry without reformatting or recopying model data.
 
-If the script finds an older `models` partition that starts before the 4 GiB
+If the script finds an older `models` partition that starts before the 16 GiB
 boundary, it aborts instead of risking model data loss. Back up that partition
-and recreate the stick once with the new layout; subsequent ISO updates can then
-preserve the model data in place.
+and recreate the stick once with the new layout; subsequent image updates can
+then preserve the model data in place.
 
 The writer script does two things:
 
-1. writes the hybrid ISO into the reserved 4 GiB area with `pv | dd` when `pv`
+1. writes the raw disk image into the reserved 16 GiB area with `pv | dd` when `pv`
    is available, otherwise with `dd status=progress`;
 2. creates or restores an ext4 partition entry labelled `models` after the fixed
-   4 GiB ISO area, formatting it only when no existing `models` filesystem is
+   16 GiB image area, formatting it only when no existing `models` filesystem is
    found there.
 
 At boot, NixOS mounts that partition at `/models`.
 
-NixOS live images are hybrid ISOs: the ISO9660 filesystem may appear on the
-whole USB device itself, while the partition table contains a small EFI boot
-partition and the appended `models` partition. Seeing only those two partition
-entries is normal; there does not have to be a separate "live ISO" partition.
+pepikronkenix USB sticks use a normal GPT partition table with an EFI system
+partition, a NixOS root partition, and the appended `models` partition.
 
 ## Boot and find the API address
 
-Boot a PC from the USB stick. In the default all-in-one ISO, choose the best
+Boot a PC from the USB stick. In the default all-in-one disk image, choose the best
 processor backend from the boot menu; if unsure, pick `CPU` or let the timeout
 select the CPU fallback automatically. Choose `CUDA` only on machines with
 supported NVIDIA GPUs; that entry loads NVIDIA's official driver. The live
@@ -424,7 +422,7 @@ lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,MOUNTPOINTS
 ```
 
 The writable partition must be labelled `models`. The provided
-`scripts/write-usb.sh` creates it automatically. If you wrote the ISO with a
+`scripts/write-usb.sh` creates it automatically. If you wrote the image with a
 different tool, create an ext4 partition labelled `models` in the remaining USB
 space.
 

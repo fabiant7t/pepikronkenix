@@ -10,31 +10,35 @@
       system = "x86_64-linux";
       pkgs = import nixpkgs { inherit system; };
 
-      mkIso = processor: nixpkgs.lib.nixosSystem {
+      mkImage = processor: nixpkgs.lib.nixosSystem {
         inherit system;
         specialArgs = { inherit self; };
         modules = [
-          "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix"
+          "${nixpkgs}/nixos/modules/virtualisation/disk-image.nix"
           ./nix/live.nix
           ({ ... }: {
             pepikronkenix.processor = processor;
+            image.format = "raw";
+            virtualisation.diskSize = 8192;
           })
         ];
       };
 
-      mkAllIso = nixpkgs.lib.nixosSystem {
+      mkAllImage = nixpkgs.lib.nixosSystem {
         inherit system;
         specialArgs = { inherit self; };
         modules = [
-          "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix"
+          "${nixpkgs}/nixos/modules/virtualisation/disk-image.nix"
           ./nix/live.nix
           ({ lib, ... }: {
             # CPU is the preselected fallback boot entry. The other entries
-            # are NixOS specialisations in the same ISO image.
+            # are NixOS specialisations in the same disk image.
             pepikronkenix = {
               processor = "cpu";
               imageProfileName = "all";
             };
+            image.format = "raw";
+            virtualisation.diskSize = 16384;
 
             specialisation = {
               vulkan.configuration = { lib, ... }: {
@@ -57,16 +61,16 @@
       };
 
       nixosConfigurations = {
-        # Default build output: one ISO with a CPU fallback boot entry plus
+        # Default build output: one disk image with a CPU fallback boot entry plus
         # Vulkan/CUDA/ROCm boot specialisations.
-        pepikronkenix = mkAllIso;
-        pepikronkenix-all = mkAllIso;
+        pepikronkenix = mkAllImage;
+        pepikronkenix-all = mkAllImage;
 
         # Single-profile images remain available for smaller/specialised builds.
-        pepikronkenix-cpu = mkIso "cpu";
-        pepikronkenix-vulkan = mkIso "vulkan";
-        pepikronkenix-cuda = mkIso "cuda";
-        pepikronkenix-rocm = mkIso "rocm";
+        pepikronkenix-cpu = mkImage "cpu";
+        pepikronkenix-vulkan = mkImage "vulkan";
+        pepikronkenix-cuda = mkImage "cuda";
+        pepikronkenix-rocm = mkImage "rocm";
       };
     };
 }

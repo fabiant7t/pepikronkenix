@@ -4,31 +4,48 @@ set -euo pipefail
 usage() {
   cat >&2 <<'EOF'
 Usage:
-  sudo scripts/write-usb.sh <iso-file> <usb-block-device> [confirmation]
+  sudo scripts/write-usb.sh <disk-image> <usb-block-device> [confirmation]
 
 Example:
-  sudo scripts/write-usb.sh result-iso/iso/pepikronkenix-*.iso /dev/sdX pepikronkenix
+  sudo scripts/write-usb.sh result/nixos.img /dev/sdX pepikronkenix
 
-This writes the ISO to the USB device and creates an ext4 partition labelled
-"models" after a fixed 4 GiB ISO area if that filesystem does not already exist
-there. Existing model data in that fixed area is preserved. ALL OTHER DATA ON
-THE DEVICE WILL BE DESTROYED.
+This writes the pepikronkenix raw disk image to the USB device and creates an
+ext4 partition labelled "models" after a fixed 16 GiB image area if that
+filesystem does not already exist there. Existing model data in that fixed area
+is preserved. ALL OTHER DATA ON THE DEVICE WILL BE DESTROYED.
 
 Safety confirmation must be the literal word: pepikronkenix
 EOF
 }
 
-ISO=${1:-}
+IMAGE=${1:-}
 USB=${2:-}
 CONFIRMATION=${3:-${CONFIRM:-}}
 
-if [[ -z "$ISO" || -z "$USB" ]]; then
+if [[ -z "$IMAGE" || -z "$USB" ]]; then
   usage
   exit 2
 fi
 
 if [[ ${EUID} -ne 0 ]]; then
   echo "ERROR: this script must run as root because it writes block devices." >&2
+  exit 1
+fi
+
+for tool in blockdev lsblk findmnt dd partprobe udevadm parted blkid mkfs.ext4 wipefs; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "ERROR: required tool '$tool' is missing." >&2
+    exit 1
+  fi
+done
+
+if ! command -v sgdisk >/dev/null 2>&1; then
+  cat >&2 <<'EOF'
+ERROR: required tool 'sgdisk' is missing.
+Install the gptfdisk package. It is needed to relocate the disk image's GPT
+backup header to the end of the target USB device before adding the models
+partition.
+EOF
   exit 1
 fi
 
@@ -39,8 +56,8 @@ if [[ "$CONFIRMATION" != "pepikronkenix" ]]; then
   exit 1
 fi
 
-if [[ ! -f "$ISO" ]]; then
-  echo "ERROR: ISO file not found: $ISO" >&2
+if [[ ! -f "$IMAGE" ]]; then
+  echo "ERROR: disk image not found: $IMAGE" >&2
   exit 1
 fi
 
@@ -72,10 +89,10 @@ fi
 cat >&2 <<EOF
 About to destroy and rewrite:
 
-$(lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,MOUNTPOINTS "$USB")
+$(lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,PARTLABEL,MOUNTPOINTS "$USB")
 
-ISO: $ISO
-USB: $USB
+Image: $IMAGE
+USB:   $USB
 EOF
 
 read -r -p "Type 'DESTROY $USB' to continue: " answer
@@ -91,21 +108,21 @@ while read -r mountpoint; do
   umount "$mountpoint"
 done < <(lsblk -nrpo MOUNTPOINTS "$USB" | sed '/^$/d' | tac)
 
-iso_bytes=$(stat -c %s "$ISO")
+image_bytes=$(stat -c %s "$IMAGE")
 disk_bytes=$(blockdev --getsize64 "$USB")
-reserved_mib=${PEPIKRONKENIX_ISO_RESERVED_MIB:-4096}
+reserved_mib=${PEPIKRONKENIX_IMAGE_RESERVED_MIB:-16384}
 reserved_bytes=$(( reserved_mib * 1024 * 1024 ))
 
-if (( iso_bytes > reserved_bytes - 16 * 1024 * 1024 )); then
-  echo "ERROR: ISO is too large for the reserved ISO area." >&2
-  echo "ISO size:      $iso_bytes bytes" >&2
+if (( image_bytes > reserved_bytes )); then
+  echo "ERROR: disk image is too large for the reserved image area." >&2
+  echo "Image size:    $image_bytes bytes" >&2
   echo "Reserved area: ${reserved_mib} MiB" >&2
-  echo "Increase PEPIKRONKENIX_ISO_RESERVED_MIB or rebuild a smaller ISO." >&2
+  echo "Increase PEPIKRONKENIX_IMAGE_RESERVED_MIB or rebuild a smaller image." >&2
   exit 1
 fi
 
 if (( disk_bytes <= reserved_bytes + 512 * 1024 * 1024 )); then
-  echo "ERROR: USB device must be at least about 512 MiB larger than the ${reserved_mib} MiB ISO area to hold the models partition." >&2
+  echo "ERROR: USB device must be at least about 512 MiB larger than the ${reserved_mib} MiB image area to hold the models partition." >&2
   exit 1
 fi
 
@@ -118,37 +135,40 @@ if [[ -n "$existing_models" ]]; then
   if [[ "$existing_models_start" != "$fixed_start_sector" ]]; then
     cat >&2 <<EOF
 ERROR: found an existing models partition at $existing_models_part, but it starts
-at sector $existing_models_start instead of the fixed ${reserved_mib} MiB ISO
+at sector $existing_models_start instead of the fixed ${reserved_mib} MiB image
 boundary at sector $fixed_start_sector.
 
-This older layout cannot be preserved while reserving ${reserved_mib} MiB for
-future ISO updates. Back up the models, remove/recreate the USB once with this
-new writer, then future writes can preserve the models filesystem.
+Back up the models, remove/recreate the USB once with this writer, then future
+writes can preserve the models filesystem.
 EOF
     exit 1
   fi
 fi
 
-echo "Writing the ISO area. Existing model data after ${reserved_mib}MiB will not be touched."
+echo "Writing the disk image area. Existing model data after ${reserved_mib}MiB will not be touched."
 
 if command -v pv >/dev/null 2>&1; then
-  echo "Writing ISO with progress bar..."
-  pv -s "$iso_bytes" "$ISO" | dd of="$USB" bs=4M status=none conv=fsync
+  echo "Writing image with progress bar..."
+  pv -s "$image_bytes" "$IMAGE" | dd of="$USB" bs=4M status=none conv=fsync
 else
-  echo "Writing ISO. Install 'pv' for a nicer progress bar."
-  dd if="$ISO" of="$USB" bs=4M status=progress conv=fsync
+  echo "Writing image. Install 'pv' for a nicer progress bar."
+  dd if="$IMAGE" of="$USB" bs=4M status=progress conv=fsync
 fi
 sync
 
-# Give the kernel a chance to notice the ISO partition table.
 partprobe "$USB" || true
 udevadm settle || true
 sleep 2
 
-# Keep a fixed 4 GiB (by default) area for the hybrid ISO at the start of the
-# USB stick. The writable models filesystem starts after that fixed area. This
-# lets future ISO updates rewrite only the beginning of the stick and recreate
-# the partition table entry without touching the slow-to-copy model data.
+# The raw image contains a GPT sized for the fixed image area. After writing it
+# to a larger USB device, move the GPT backup header to the real end of the
+# device so a normal third partition can be added for models.
+echo "Relocating GPT backup header to the end of $USB..."
+sgdisk -e "$USB"
+partprobe "$USB" || true
+udevadm settle || true
+sleep 2
+
 start_mib=$reserved_mib
 disk_mib=$(( disk_bytes / (1024 * 1024) ))
 
@@ -158,20 +178,11 @@ if (( disk_mib - start_mib < 512 )); then
 fi
 
 echo "Creating/restoring writable ext4 partition entry labelled 'models' from ${start_mib}MiB to end of disk..."
-# Hybrid NixOS ISOs commonly expose an msdos partition table after writing.
-# On msdos, parted expects a partition type such as "primary" here; on GPT,
-# the same token is accepted as the partition name. mkpart only creates the
-# partition table entry; it does not format or wipe an existing filesystem at
-# that offset.
-parted -s -a optimal "$USB" mkpart primary ext4 "${start_mib}MiB" 100%
+parted -s -a optimal "$USB" mkpart models ext4 "${start_mib}MiB" 100%
 partprobe "$USB" || true
 udevadm settle || true
 sleep 2
 
-# Pick the partition that starts at the fixed model-data offset. Hybrid NixOS
-# ISOs can contain small boot partitions near the start of the disk whose
-# partition numbers are higher than the appended writable partition, so "last
-# partition in lsblk output" is not a reliable way to find it.
 models_part=$(lsblk -nrpo NAME,TYPE,START "$USB" \
   | awk -v start="$(( start_mib * 1024 * 1024 / 512 ))" '$2 == "part" && $3 == start { print $1; exit }')
 if [[ -z "$models_part" || ! -b "$models_part" ]]; then
@@ -195,12 +206,7 @@ cat >&2 <<EOF
 Done.
 
 USB layout:
-$(lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,MOUNTPOINTS "$USB")
-
-Note: NixOS hybrid ISOs usually show the ISO9660 filesystem on the whole disk
-($USB), plus partition entries such as a small EFI boot partition and the
-appended ext4 'models' partition. A separate "live ISO" partition is not
-required.
+$(lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,PARTLABEL,MOUNTPOINTS "$USB")
 
 Boot a PC from $USB. The live system will mount the writable partition at /models.
 EOF
