@@ -221,6 +221,7 @@ in
       ${pkgs.systemd}/bin/udevadm trigger --subsystem-match=block || true
       ${pkgs.systemd}/bin/udevadm settle --timeout=60 || true
       ${pkgs.kmod}/bin/modprobe ext4 || true
+      ${pkgs.kmod}/bin/modprobe loop || true
 
       models_device=""
       for _ in $(${pkgs.coreutils}/bin/seq 1 120); do
@@ -257,21 +258,39 @@ in
       echo "Found model partition: $models_device ($models_real_device)"
       ${pkgs.util-linux}/bin/lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,UUID,MOUNTPOINTS "$models_real_device" || true
 
+      mount_device="$models_real_device"
+      parent_device="$(${pkgs.util-linux}/bin/lsblk -nrpo PKNAME "$models_real_device" | ${pkgs.coreutils}/bin/head -n1 || true)"
+      parent_mounts=""
+      if [ -n "$parent_device" ]; then
+        parent_mounts="$(${pkgs.util-linux}/bin/lsblk -nrpo MOUNTPOINTS "$parent_device" | ${pkgs.gnugrep}/bin/grep -v '^$' || true)"
+      fi
+
+      if [ -n "$parent_device" ] && [ -n "$parent_mounts" ]; then
+        echo "Parent device $parent_device is mounted ($parent_mounts)."
+        echo "Using a loop device for the model partition region to avoid whole-disk live ISO mount conflicts."
+        start_bytes="$(${pkgs.util-linux}/bin/lsblk -b -nrpo START "$models_real_device")"
+        size_bytes="$(${pkgs.util-linux}/bin/lsblk -b -nrpo SIZE "$models_real_device")"
+        loop_device="$(${pkgs.util-linux}/bin/losetup --find --show --offset "$start_bytes" --sizelimit "$size_bytes" "$parent_device")"
+        mount_device="$loop_device"
+        echo "Loop device for models: $mount_device over $parent_device offset=$start_bytes size=$size_bytes"
+      fi
+
       # If the stick was unplugged without a clean unmount while models were
       # copied, ext4 may require journal replay/fsck before it will mount.
-      ${pkgs.e2fsprogs}/bin/e2fsck -p "$models_real_device" || true
+      ${pkgs.e2fsprogs}/bin/e2fsck -p "$mount_device" || true
 
-      echo "Mounting $models_real_device at /models"
-      ${pkgs.util-linux}/bin/mount -t ext4 -o rw "$models_real_device" /models || {
-        echo "ERROR: failed to mount $models_real_device; using non-persistent live tmpfs at /models" >&2
+      echo "Mounting $mount_device at /models"
+      ${pkgs.util-linux}/bin/mount -t ext4 -o rw "$mount_device" /models || {
+        echo "ERROR: failed to mount $mount_device; using non-persistent live tmpfs at /models" >&2
         ${pkgs.util-linux}/bin/lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,UUID,MOUNTPOINTS || true
         ${pkgs.util-linux}/bin/blkid || true
+        ${pkgs.util-linux}/bin/losetup --list || true
         ${pkgs.util-linux}/bin/dmesg | ${pkgs.coreutils}/bin/tail -n 80 || true
         echo "The same diagnostics are readable at $log" >&2
         exit 1
       }
 
-      echo "Mounted $models_real_device at /models successfully"
+      echo "Mounted $mount_device at /models successfully"
       ${pkgs.util-linux}/bin/findmnt /models || true
     '';
   };
