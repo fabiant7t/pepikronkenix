@@ -10,7 +10,7 @@ Example:
   sudo scripts/write-usb.sh result/nixos.img /dev/sdX pepikronkenix
 
 This writes the pepikronkenix raw disk image to the USB device and creates an
-ext4 partition labelled "models" after a fixed 16 GiB image area if that
+ext4 partition labelled "models" after a fixed 8 GiB image area if that
 filesystem does not already exist there. Existing model data in that fixed area
 is preserved. ALL OTHER DATA ON THE DEVICE WILL BE DESTROYED.
 
@@ -110,7 +110,7 @@ done < <(lsblk -nrpo MOUNTPOINTS "$USB" | sed '/^$/d' | tac)
 
 image_bytes=$(stat -c %s "$IMAGE")
 disk_bytes=$(blockdev --getsize64 "$USB")
-reserved_mib=${PEPIKRONKENIX_IMAGE_RESERVED_MIB:-16384}
+reserved_mib=${PEPIKRONKENIX_IMAGE_RESERVED_MIB:-8192}
 reserved_bytes=$(( reserved_mib * 1024 * 1024 ))
 
 if (( image_bytes > reserved_bytes )); then

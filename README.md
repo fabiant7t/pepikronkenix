@@ -172,24 +172,24 @@ sudo make write-usb \
   CONFIRM=pepikronkenix
 ```
 
-The writer script keeps the first 16 GiB of the USB stick reserved for the
+The writer script keeps the first 8 GiB of the USB stick reserved for the
 raw disk image. The writable `models` partition starts after that fixed area.
 This makes future image updates much faster: if an ext4 filesystem labelled
-`models` already exists at the 16 GiB boundary, the script rewrites the image
+`models` already exists at the 8 GiB boundary, the script rewrites the image
 area, relocates the GPT backup header to the end of the USB device, and restores
 the partition table entry without reformatting or recopying model data.
 
-If the script finds an older `models` partition that starts before the 16 GiB
+If the script finds an older `models` partition that starts before the 8 GiB
 boundary, it aborts instead of risking model data loss. Back up that partition
 and recreate the stick once with the new layout; subsequent image updates can
 then preserve the model data in place.
 
 The writer script does two things:
 
-1. writes the raw disk image into the reserved 16 GiB area with `pv | dd` when `pv`
+1. writes the raw disk image into the reserved 8 GiB area with `pv | dd` when `pv`
    is available, otherwise with `dd status=progress`;
 2. creates or restores an ext4 partition entry labelled `models` after the fixed
-   16 GiB image area, formatting it only when no existing `models` filesystem is
+   8 GiB image area, formatting it only when no existing `models` filesystem is
    found there.
 
 At boot, NixOS mounts that partition at `/models`.

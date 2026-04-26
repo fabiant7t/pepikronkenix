@@ -19,7 +19,7 @@
           ({ ... }: {
             pepikronkenix.processor = processor;
             image.format = "raw";
-            virtualisation.diskSize = 8192;
+            virtualisation.diskSize = 6144;
           })
         ];
       };
@@ -38,7 +38,7 @@
               imageProfileName = "all";
             };
             image.format = "raw";
-            virtualisation.diskSize = 16384;
+            virtualisation.diskSize = 8192;
 
             specialisation = {
               vulkan.configuration = { lib, ... }: {
