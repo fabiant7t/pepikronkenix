@@ -119,8 +119,25 @@ in
     nvidiaPersistenced = true;
   };
   # The live USB uses ordinary GPT partitions: an EFI system partition, a NixOS
-  # root partition, and an appended ext4 models partition.
+  # root partition, and an appended ext4 models partition. The disk-image module
+  # defaults to VM-oriented images, so make USB mass-storage support explicit in
+  # the initrd and do not grow the root partition into the later models area.
   boot.supportedFilesystems = [ "ext4" ];
+  boot.growPartition = lib.mkForce false;
+  fileSystems."/".autoResize = lib.mkForce false;
+  boot.initrd.availableKernelModules = [
+    "usb_storage"
+    "uas"
+    "scsi_mod"
+    "sd_mod"
+    "xhci_pci"
+    "xhci_hcd"
+    "ehci_pci"
+    "ehci_hcd"
+    "ohci_pci"
+    "ohci_hcd"
+    "uhci_hcd"
+  ];
   boot.kernelModules = [ "ext4" ] ++ lib.optionals (cfg.processor == "cuda") [
     "nvidia"
     "nvidia_uvm"
