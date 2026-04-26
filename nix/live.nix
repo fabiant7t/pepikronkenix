@@ -123,7 +123,12 @@ in
     modesetting.enable = true;
     nvidiaPersistenced = true;
   };
-  boot.kernelModules = lib.optionals (cfg.processor == "cuda") [
+  # The live root itself is ISO9660/squashfs, so make ext4 explicit for the
+  # appended writable USB partition. This also pulls the usual ext filesystem
+  # tooling into the image instead of relying on whatever the ISO profile needs
+  # for its own root filesystem.
+  boot.supportedFilesystems = [ "ext4" ];
+  boot.kernelModules = [ "ext4" ] ++ lib.optionals (cfg.processor == "cuda") [
     "nvidia"
     "nvidia_uvm"
     "nvidia_modeset"
@@ -206,6 +211,7 @@ in
 
       ${pkgs.systemd}/bin/udevadm trigger --subsystem-match=block || true
       ${pkgs.systemd}/bin/udevadm settle --timeout=60 || true
+      ${pkgs.kmod}/bin/modprobe ext4 || true
 
       models_device=""
       for _ in $(${pkgs.coreutils}/bin/seq 1 120); do
@@ -214,8 +220,14 @@ in
           break
         fi
 
-        # Fallback for cases where the block device is visible but the by-label
-        # symlink has not been created yet.
+        # Fallbacks for cases where the block device is visible but the by-label
+        # symlink has not been created yet. blkid probes devices directly;
+        # lsblk is useful when udev's database already knows the filesystem.
+        models_device="$(${pkgs.util-linux}/bin/blkid -t TYPE=ext4 -t LABEL=models -o device 2>/dev/null | ${pkgs.coreutils}/bin/head -n1 || true)"
+        if [ -n "$models_device" ]; then
+          break
+        fi
+
         models_device="$(${pkgs.util-linux}/bin/lsblk -nrpo NAME,FSTYPE,LABEL \
           | ${pkgs.gawk}/bin/awk '$2 == "ext4" && $3 == "models" { print $1; exit }')"
         if [ -n "$models_device" ]; then
@@ -227,14 +239,25 @@ in
 
       if [ -z "$models_device" ]; then
         echo "WARNING: no ext4 partition labelled 'models' found; using non-persistent live tmpfs at /models" >&2
-        ${pkgs.util-linux}/bin/lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,MOUNTPOINTS || true
+        ${pkgs.util-linux}/bin/lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,UUID,MOUNTPOINTS || true
+        ${pkgs.util-linux}/bin/blkid || true
         exit 0
       fi
 
-      echo "Mounting $models_device at /models"
-      ${pkgs.util-linux}/bin/mount -t ext4 -o rw "$models_device" /models || {
-        echo "WARNING: failed to mount $models_device; using non-persistent live tmpfs at /models" >&2
-        ${pkgs.util-linux}/bin/lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,MOUNTPOINTS || true
+      models_real_device="$(${pkgs.coreutils}/bin/readlink -f "$models_device" || printf '%s\n' "$models_device")"
+      echo "Found model partition: $models_device ($models_real_device)"
+      ${pkgs.util-linux}/bin/lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,UUID,MOUNTPOINTS "$models_real_device" || true
+
+      # If the stick was unplugged without a clean unmount while models were
+      # copied, ext4 may require journal replay/fsck before it will mount.
+      ${pkgs.e2fsprogs}/bin/e2fsck -p "$models_real_device" || true
+
+      echo "Mounting $models_real_device at /models"
+      ${pkgs.util-linux}/bin/mount -t ext4 -o rw "$models_real_device" /models || {
+        echo "WARNING: failed to mount $models_real_device; using non-persistent live tmpfs at /models" >&2
+        ${pkgs.util-linux}/bin/lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,UUID,MOUNTPOINTS || true
+        ${pkgs.util-linux}/bin/blkid || true
+        ${pkgs.util-linux}/bin/dmesg | ${pkgs.coreutils}/bin/tail -n 80 || true
         exit 0
       }
     '';
