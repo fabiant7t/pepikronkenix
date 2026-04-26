@@ -11,6 +11,18 @@ let
     cuda = "CUDA";
     rocm = "ROCm";
   }.${cfg.processor};
+  cudaRuntimeLibraryPath = lib.optionalString (cfg.processor == "cuda") (lib.makeLibraryPath (with pkgs.cudaPackages_13; [
+    cuda_cudart
+    cuda_nvrtc
+    libcublas
+  ]));
+
+  kronkLibraryPath = lib.concatStringsSep ":" (lib.filter (path: path != "") [
+    "/models/.kronk/libraries"
+    "/run/opengl-driver/lib"
+    cudaRuntimeLibraryPath
+  ]);
+
   kronkEnv = {
     HOME = "/models";
     KRONK_BASE_PATH = "/models/kronk";
@@ -23,7 +35,7 @@ let
     # The Kronk package wrapper prepends its Nix-store runtime libraries to this,
     # so dlopen can see both the downloaded llama.cpp files and Nix-provided
     # libstdc++/libgomp/libffi.
-    LD_LIBRARY_PATH = "/models/.kronk/libraries:/run/opengl-driver/lib";
+    LD_LIBRARY_PATH = kronkLibraryPath;
     # Keep the live system predictable. Run `kronk libs --local` manually if you
     # intentionally want to upgrade the llama.cpp backend on the writable disk.
     KRONK_ALLOW_UPGRADE = "false";
@@ -441,6 +453,10 @@ in
     lshw
     vulkan-tools
     clinfo
+  ] ++ lib.optionals (cfg.processor == "cuda") [
+    pkgs.cudaPackages_13.cuda_cudart
+    pkgs.cudaPackages_13.cuda_nvrtc
+    pkgs.cudaPackages_13.libcublas
   ];
 
   hardware.graphics.enable = true;

@@ -109,8 +109,10 @@ This produces a single raw disk image with boot menu entries for:
 
 - `CPU` — preselected fallback boot entry, widest compatibility;
 - `Vulkan`;
-- `CUDA` — includes NVIDIA's official/proprietary driver stack and enables
-  unfree packages in the NixOS configuration so `libcuda.so` is available;
+- `CUDA` — includes NVIDIA's official/proprietary driver stack, enables
+  unfree packages in the NixOS configuration so `libcuda.so` is available,
+  and exposes CUDA 13 runtime libraries needed by Kronk's downloaded
+  llama.cpp CUDA backend;
 - `ROCm`.
 
 Single-profile images are still available when you want a smaller/specialised
