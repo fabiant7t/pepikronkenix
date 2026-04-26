@@ -15,7 +15,7 @@ let
     HOME = "/models";
     KRONK_BASE_PATH = "/models/kronk";
     KRONK_MODELS = "/models/kronk/models";
-    KRONK_LIB_PATH = "/models/kronk/libraries";
+    KRONK_LIB_PATH = "/models/.kronk/libraries";
     KRONK_WEB_API_HOST = "0.0.0.0:11435";
     KRONK_WEB_CORS_ALLOWED_ORIGINS = "*";
     KRONK_PROCESSOR = cfg.processor;
@@ -23,7 +23,7 @@ let
     # The Kronk package wrapper prepends its Nix-store runtime libraries to this,
     # so dlopen can see both the downloaded llama.cpp files and Nix-provided
     # libstdc++/libgomp/libffi.
-    LD_LIBRARY_PATH = "/models/kronk/libraries:/run/opengl-driver/lib";
+    LD_LIBRARY_PATH = "/models/.kronk/libraries:/run/opengl-driver/lib";
     # Keep the live system predictable. Run `kronk libs --local` manually if you
     # intentionally want to upgrade the llama.cpp backend on the writable disk.
     KRONK_ALLOW_UPGRADE = "false";
@@ -75,8 +75,8 @@ let
 
   indexScript = pkgs.writeShellScriptBin "pepikronkenix-index-models" (withKronkEnv ''
     umask 0002
-    mkdir -p /models/kronk/models /models/kronk/libraries
-    chmod g+rwxs /models/kronk /models/kronk/models /models/kronk/libraries 2>/dev/null || true
+    mkdir -p /models/kronk/models /models/.kronk/libraries
+    chmod g+rwxs /models/kronk /models/kronk/models /models/.kronk /models/.kronk/libraries 2>/dev/null || true
     exec ${pkgs.coreutils}/bin/env ${kronkEnvArgs} \
       ${kronk}/bin/kronk model index --local
   '');
@@ -198,7 +198,8 @@ in
     "d /models 2775 root models -"
     "d /models/kronk 2775 kronk models -"
     "d /models/kronk/models 2775 kronk models -"
-    "d /models/kronk/libraries 2775 kronk models -"
+    "d /models/.kronk 2775 kronk models -"
+    "d /models/.kronk/libraries 2775 kronk models -"
   ];
 
   systemd.services.pepikronkenix-mount-models = {
@@ -292,11 +293,11 @@ in
     wants = [ "pepikronkenix-mount-models.service" ];
     serviceConfig.Type = "oneshot";
     script = ''
-      install -d -m 2775 -o kronk -g models /models/kronk /models/kronk/models /models/kronk/libraries
+      install -d -m 2775 -o kronk -g models /models/kronk /models/kronk/models /models/.kronk/libraries
       chown root:models /models || true
       chmod 2775 /models || true
-      chown kronk:models /models/kronk /models/kronk/models /models/kronk/libraries || true
-      chmod 2775 /models/kronk /models/kronk/models /models/kronk/libraries || true
+      chown kronk:models /models/kronk /models/kronk/models /models/.kronk /models/.kronk/libraries || true
+      chmod 2775 /models/kronk /models/kronk/models /models/.kronk /models/.kronk/libraries || true
     '';
   };
 
@@ -321,7 +322,7 @@ in
     };
     environment = kronkEnv;
     script = ''
-      profile_marker=/models/kronk/libraries/.pepikronkenix-library-profile
+      profile_marker=/models/.kronk/libraries/.pepikronkenix-library-profile
       machine_arch="$(${pkgs.coreutils}/bin/uname -m)"
       cpu_flags_hash="$(${pkgs.gawk}/bin/awk -F: '/^flags[[:space:]]*:/ { print $2; exit }' /proc/cpuinfo \
         | ${pkgs.coreutils}/bin/tr ' ' '\n' \
@@ -335,26 +336,26 @@ in
         | ${pkgs.gawk}/bin/awk '{ print $1 }')"
       expected_profile="processor=${cfg.processor};machine=$machine_arch;cpu_flags_sha256=$cpu_flags_hash;gpu_pci_sha256=$gpu_pci_hash"
 
-      ${pkgs.coreutils}/bin/install -d -m 2775 /models/kronk/libraries
+      ${pkgs.coreutils}/bin/install -d -m 2775 /models/.kronk/libraries
 
       installed_profile=""
       if [ -e "$profile_marker" ]; then
         installed_profile="$(${pkgs.coreutils}/bin/cat "$profile_marker" 2>/dev/null || true)"
       fi
 
-      if [ -e /models/kronk/libraries/version.json ] && [ "$installed_profile" = "$expected_profile" ]; then
-        echo "Kronk llama.cpp libraries already installed for $expected_profile in /models/kronk/libraries"
+      if [ -e /models/.kronk/libraries/version.json ] && [ "$installed_profile" = "$expected_profile" ]; then
+        echo "Kronk llama.cpp libraries already installed for $expected_profile in /models/.kronk/libraries"
         exit 0
       fi
 
-      if ${pkgs.findutils}/bin/find /models/kronk/libraries -mindepth 1 -maxdepth 1 -print -quit | ${pkgs.gnugrep}/bin/grep -q .; then
+      if ${pkgs.findutils}/bin/find /models/.kronk/libraries -mindepth 1 -maxdepth 1 -print -quit | ${pkgs.gnugrep}/bin/grep -q .; then
         if [ -n "$installed_profile" ]; then
           echo "Kronk llama.cpp libraries/profile '$installed_profile' do not match this boot's '$expected_profile'."
         else
           echo "Kronk llama.cpp libraries exist without a pepikronkenix profile marker."
         fi
         echo "Removing stale runtime libraries before installing the selected backend."
-        ${pkgs.findutils}/bin/find /models/kronk/libraries -mindepth 1 -maxdepth 1 -exec ${pkgs.coreutils}/bin/rm -rf -- {} +
+        ${pkgs.findutils}/bin/find /models/.kronk/libraries -mindepth 1 -maxdepth 1 -exec ${pkgs.coreutils}/bin/rm -rf -- {} +
       fi
 
       echo "Installing Kronk llama.cpp libraries for processor=${cfg.processor}. This needs internet once."

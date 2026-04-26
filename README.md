@@ -332,19 +332,19 @@ The service runs as the system user `kronk` and uses these important variables:
 ```text
 KRONK_BASE_PATH=/models/kronk
 KRONK_MODELS=/models/kronk/models
-KRONK_LIB_PATH=/models/kronk/libraries
+KRONK_LIB_PATH=/models/.kronk/libraries
 KRONK_WEB_API_HOST=0.0.0.0:11435
 KRONK_PROCESSOR=<cpu|vulkan|cuda|rocm>
 ```
 
 At first boot, the live system tries to install Kronk's llama.cpp runtime
-libraries into `/models/kronk/libraries`. This requires internet access once. If
+libraries into `/models/.kronk/libraries`. This requires internet access once. If
 that step fails, boot again later with internet access; the library installer
 service is retried at boot while the libraries are missing.
 
 The library installer is profile-aware. It records the selected backend plus a
 small hardware signature in
-`/models/kronk/libraries/.pepikronkenix-library-profile`. The signature includes
+`/models/.kronk/libraries/.pepikronkenix-library-profile`. The signature includes
 the selected processor mode, machine architecture, CPU feature flags, and visible
 display/GPU PCI devices. If a later boot selects a different backend or runs on
 different hardware, pepikronkenix removes the old runtime libraries before
@@ -458,9 +458,9 @@ Verify that GGUF files are below the expected two-level directory structure:
 Check whether the runtime libraries exist:
 
 ```bash
-ls -la /models/kronk/libraries
-cat /models/kronk/libraries/version.json
-cat /models/kronk/libraries/.pepikronkenix-library-profile
+ls -la /models/.kronk/libraries
+cat /models/.kronk/libraries/version.json
+cat /models/.kronk/libraries/.pepikronkenix-library-profile
 ```
 
 If missing, boot the live system with internet access and inspect the installer
