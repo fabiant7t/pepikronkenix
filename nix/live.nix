@@ -11,11 +11,18 @@ let
     cuda = "CUDA";
     rocm = "ROCm";
   }.${cfg.processor};
-  cudaRuntimeLibraryPath = lib.optionalString (cfg.processor == "cuda") (lib.makeLibraryPath (with pkgs.cudaPackages_13; [
+  cudaRuntimeLibraryPath = lib.optionalString (cfg.processor == "cuda") (lib.makeLibraryPath ([
+    # Kronk downloads llama.cpp backend libraries to /models at first boot.
+    # Those dlopened libraries do not get Nix RPATH patching, so every dynamic
+    # dependency they need must be discoverable through LD_LIBRARY_PATH.
+    pkgs.openssl
+    pkgs.stdenv.cc.cc.lib
+  ] ++ (with pkgs.cudaPackages_13; [
     cuda_cudart
     cuda_nvrtc
     libcublas
-  ]));
+    nccl
+  ])));
 
   kronkLibraryPath = lib.concatStringsSep ":" (lib.filter (path: path != "") [
     "/models/.kronk/libraries"
@@ -454,9 +461,12 @@ in
     vulkan-tools
     clinfo
   ] ++ lib.optionals (cfg.processor == "cuda") [
+    openssl
+    stdenv.cc.cc.lib
     pkgs.cudaPackages_13.cuda_cudart
     pkgs.cudaPackages_13.cuda_nvrtc
     pkgs.cudaPackages_13.libcublas
+    pkgs.cudaPackages_13.nccl
   ];
 
   hardware.graphics.enable = true;
